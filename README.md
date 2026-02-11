@@ -4,13 +4,13 @@
 
 Library that I use for kaggle competitions. This is kind of like Autogluon but you decide what models you fit, and all models you fit are saved for later usage in ensembling, stacking, etc.
 
-Following Autogluon's strategy (since it seeme to win all AutoML benchmarks), I use synchronized stratified k-folds and all ensembling is done on out-of-fold predictions, and for inference per-fold predictions are averaged. Actually in autogluon ensembling is fit on averaged predictions, whereas I only average at the very end which I think should work better. But I literally just made the library and now I am going to benchmark it and see whether it is better.
+Following Autogluon's strategy (since it seeme to win all AutoML benchmarks), I use synchronized stratified k-folds and all ensembling is done on out-of-fold predictions, and for inference per-fold predictions are averaged. Actually in autogluon ensembling is fitted on averaged predictions, whereas I only average at the very end which I think should work better. But I literally just made this and now I am going to benchmark it and see whether it is better.
 
 ### How to use
 
 #### 1. Initialize
 
-First time you run this code, TabularFitter creates a directory where all your models are saved as well as other stuff such as fold indexes. Next time you run it, the directory will be loaded and all your models will be there, and you can continue fitting new models. No model you fit goes to waste - ensembles from many diverse models are extremely powerful.
+First time ``fitter.initialize`` is ran, it creates a directory where all fitted models are saved as well as other stuff such as fold indexes. The next time the directory will be loaded and all models will be there, and you can continue fitting new models. No model you fit goes to waste - ensembles from many diverse models are extremely powerful.
 
 ```python
 import polars as pl
@@ -105,7 +105,7 @@ It is also possible fit a transformer to predictions of other models with or wit
 # fit SequentialFeatureSelector
 fitter.fit_transformer(
     name = "SFF",
-    model = make_pipeline(
+    transformer = make_pipeline(
         StandardScaler(),
         SequentialFeatureSelector(LogisticRegression()),
         scoring="roc_auc",
@@ -121,10 +121,10 @@ fitter.fit_model(
 )
 
 # transformer can also be fitted to predictions
-# of other models rather than dataset features.
+# of other models rather than dataset features, or to both
 fitter.fit_transformer(
     name = "SFF L2",
-    model = make_pipeline(
+    transformer = make_pipeline(
         StandardScaler(),
         SequentialFeatureSelector(LogisticRegression()),
         scoring="roc_auc",
