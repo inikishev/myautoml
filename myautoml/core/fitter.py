@@ -310,6 +310,19 @@ class TabularFitter:
 
         return models["name"].to_list()
 
+    def preview_transformed(
+        self,
+        transformer: str | None = None,
+        stack_models: str | Sequence[str] | None = None,
+        passthrough: bool = True,
+        response_method: ResponseMethod = 'predict_proba',
+        set_i: int = 0,
+    ):
+        return self.get_stacked_X(
+            set_i=set_i, stack_models=stack_models, transformer=transformer,
+            passthrough=passthrough, response_method=response_method,
+        )
+
     def list_fitted_transformers(self, sort="start_time"):
         _,transformers_d = self._get_fitted_configs()
         transformers = pl.from_dicts(list(transformers_d.values()))
@@ -345,10 +358,12 @@ class TabularFitter:
 
         if self.caching_level != 2: self._temp_cached.clear()
         self._temp_caching_enabled = True
-        yield
+        try:
+            yield
 
-        if self.caching_level != 2: self._temp_cached.clear()
-        self._temp_caching_enabled = False
+        finally:
+            if self.caching_level != 2: self._temp_cached.clear()
+            self._temp_caching_enabled = False
 
     def transform_oof(self, set_i: int, transformer: str) -> pl.DataFrame:
         """(Internal method) Returns ``self.X`` transformed by out-of-fold (if applicable) ``transformer`` for fold set ``set_i``."""
