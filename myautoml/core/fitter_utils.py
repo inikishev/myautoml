@@ -301,7 +301,7 @@ def rename_model(self: "TabularFitter", current_name: str, new_name: str):
 
             if config["stack_models"] is not None:
                 config["stack_models"] = [m if m!=current_name else new_name for m in config["stack_models"]]
-                with open(estimator / "config.json", "r", encoding="utf-8") as f: json.dump(config, f)
+                with open(estimator / "config.json", "w", encoding="utf-8") as f: json.dump(config, f)
 
 
 def rename_transformer(self: "TabularFitter", current_name: str, new_name: str):
@@ -319,9 +319,9 @@ def rename_transformer(self: "TabularFitter", current_name: str, new_name: str):
 
             if "transformer" in config and config["transformer"] == current_name:
                 config["transformer"] = new_name
-                with open(estimator / "config.json", "r", encoding="utf-8") as f: json.dump(config, f)
+                with open(estimator / "config.json", "w", encoding="utf-8") as f: json.dump(config, f)
 
             if "pre_transformer" in config and config["pre_transformer"] == current_name:
                 config["pre_transformer"] = new_name
-                with open(estimator / "config.json", "r", encoding="utf-8") as f: json.dump(config, f)
+                with open(estimator / "config.json", "w", encoding="utf-8") as f: json.dump(config, f)
 
