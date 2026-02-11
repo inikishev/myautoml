@@ -618,6 +618,7 @@ class TabularFitter:
         scores = defaultdict(list)
         data = {}
         supports_proba = False
+        qual_name = None
 
         fold_set, fold_map = self.fold_set.merge_folds(n_folds=max_folds)
         self.logger.info('Fitting %i models "%s"', fold_set.n_models, name)
@@ -660,6 +661,8 @@ class TabularFitter:
 
                         fitted_model = fit_fn(model, X_train, y_train, X_unlabeled_fold)
                         joblib.dump(fitted_model, fitted_model_dir, compress=3)
+
+                    qual_name = python_utils.get_qualname(fitted_model)
 
                     # score
                     preds_train = np.asarray(fitted_model.predict(X_train))
@@ -715,6 +718,7 @@ class TabularFitter:
             "n_models": fold_set.n_models,
             "start_time": start_time,
             "fit_sec": fit_sec,
+            "qual_name": qual_name,
             **scores,
             **{f"{k}_mean": np.mean(v) for k,v in scores.items()},
         }
@@ -783,6 +787,7 @@ class TabularFitter:
 
         transformer_dir.mkdir(exist_ok=True)
 
+        qual_name = None
         with self._temp_caching_context():
 
             fold_map = None
@@ -824,6 +829,7 @@ class TabularFitter:
                         )
 
                         fitted_transformer = fit_fn(transformer, X_train, y_train, X_unlabeled_fold)
+                        qual_name = python_utils.get_qualname(fitted_transformer)
 
                         joblib.dump(fitted_transformer, fitted_dir, compress=3)
                         data[f"test_index_{set_i}_{fold_i}"] = test_index
@@ -860,9 +866,11 @@ class TabularFitter:
                         )
 
                         fitted_transformer = fit_fn(transformer, X, self.y, X_unlabeled_fold)
+                        qual_name = python_utils.get_qualname(fitted_transformer)
                         joblib.dump(fitted_transformer, fitted_dir, compress=3)
 
         fit_sec = time.time() - start_time
+        if qual_name is None: qual_name = python_utils.get_qualname(transformer)
         config = {
             "pre_transformer": pre_transformer,
             "stack_models": stack_models,
@@ -873,6 +881,7 @@ class TabularFitter:
             "n_transformers": n_transformers,
             "start_time": start_time,
             "fit_sec": fit_sec,
+            "qual_name": qual_name,
         }
 
         with open(transformer_dir / "config.json", "w", encoding="utf-8") as f:

@@ -205,3 +205,9 @@ def read_json(file: str | os.PathLike):
 def write_json(d: Mapping, file: str | os.PathLike):
     with open(file, "w", encoding='utf-8') as f:
         json.dump(d, f)
+
+def get_qualname(obj):
+    class_ = obj.__class__
+    module = class_.__module__
+    if module == 'builtins': return class_.__qualname__
+    return module + '.' + class_.__qualname__
