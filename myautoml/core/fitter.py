@@ -618,7 +618,8 @@ class TabularFitter:
         scores = defaultdict(list)
         data = {}
         supports_proba = False
-        qual_name = None
+        obj_qualname = None
+        obj_repr = None
 
         fold_set, fold_map = self.fold_set.merge_folds(n_folds=max_folds)
         self.logger.info('Fitting %i models "%s"', fold_set.n_models, name)
@@ -662,7 +663,8 @@ class TabularFitter:
                         fitted_model = fit_fn(model, X_train, y_train, X_unlabeled_fold)
                         joblib.dump(fitted_model, fitted_model_dir, compress=3)
 
-                    qual_name = python_utils.get_qualname(fitted_model)
+                    obj_qualname = python_utils.get_qualname(fitted_model)
+                    obj_repr = repr(fitted_model)[:10_000]
 
                     # score
                     preds_train = np.asarray(fitted_model.predict(X_train))
@@ -718,13 +720,17 @@ class TabularFitter:
             "n_models": fold_set.n_models,
             "start_time": start_time,
             "fit_sec": fit_sec,
-            "qual_name": qual_name,
+            "obj_qualname": obj_qualname,
             **scores,
             **{f"{k}_mean": np.mean(v) for k,v in scores.items()},
         }
 
         with open(model_dir / "config.json", "w", encoding="utf-8") as f:
             json.dump(config, f)
+
+        assert obj_repr is not None
+        with open(model_dir / "repr.txt", "w", encoding='utf-8') as f:
+            f.write(obj_repr)
 
         with open(model_dir / "done.txt", "w", encoding='utf-8') as f:
             f.write("done")
@@ -787,7 +793,8 @@ class TabularFitter:
 
         transformer_dir.mkdir(exist_ok=True)
 
-        qual_name = None
+        obj_qualname = None
+        obj_repr = None
         with self._temp_caching_context():
 
             fold_map = None
@@ -829,7 +836,8 @@ class TabularFitter:
                         )
 
                         fitted_transformer = fit_fn(transformer, X_train, y_train, X_unlabeled_fold)
-                        qual_name = python_utils.get_qualname(fitted_transformer)
+                        obj_qualname = python_utils.get_qualname(fitted_transformer)
+                        obj_repr = repr(fitted_transformer)[:10_000]
 
                         joblib.dump(fitted_transformer, fitted_dir, compress=3)
                         data[f"test_index_{set_i}_{fold_i}"] = test_index
@@ -866,11 +874,17 @@ class TabularFitter:
                         )
 
                         fitted_transformer = fit_fn(transformer, X, self.y, X_unlabeled_fold)
-                        qual_name = python_utils.get_qualname(fitted_transformer)
+                        obj_qualname = python_utils.get_qualname(fitted_transformer)
+                        obj_repr = repr(fitted_transformer)[:10_000]
                         joblib.dump(fitted_transformer, fitted_dir, compress=3)
 
+
+        if obj_qualname is None:
+            obj_qualname = python_utils.get_qualname(transformer)
+            obj_repr = repr(transformer)[:10_000]
+
         fit_sec = time.time() - start_time
-        if qual_name is None: qual_name = python_utils.get_qualname(transformer)
+
         config = {
             "pre_transformer": pre_transformer,
             "stack_models": stack_models,
@@ -881,11 +895,15 @@ class TabularFitter:
             "n_transformers": n_transformers,
             "start_time": start_time,
             "fit_sec": fit_sec,
-            "qual_name": qual_name,
+            "obj_qualname": obj_qualname,
         }
 
         with open(transformer_dir / "config.json", "w", encoding="utf-8") as f:
             json.dump(config, f)
+
+        assert obj_repr is not None
+        with open(transformer_dir / "repr.txt", "w", encoding='utf-8') as f:
+            f.write(obj_repr)
 
         with open(transformer_dir / "done.txt", "w", encoding='utf-8') as f:
             f.write("done")
