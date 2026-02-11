@@ -1,1 +1,3 @@
-from .features import ToCUDA, UnsupervisedFeatures
+from .features import UnsupervisedFeatures
+from .utility import ToCUDA
+from .weighted_ensemble import GreedyWeightedEnsembleClassifier, GreedyWeightedEnsembleRegressor

@@ -20,7 +20,8 @@ from sklearn.model_selection import KFold, StratifiedKFold
 from ..polars_transformers.auto_encoder import AutoEncoder, _AutoEncoderWrapper
 from ..utils import numpy_utils, polars_utils, python_utils
 from ..utils.rng import RNG
-from . import fitter_utils, scoring
+from . import fitter_utils
+from ..metrics import scoring
 
 ResponseMethod = Literal["predict", "predict_proba"]
 
@@ -76,7 +77,7 @@ class TabularFitter:
         y: str | pl.Series | Any,
         X_unlabeled=None,
         problem_type: fitter_utils.ProblemType | None = None,
-        eval_metric: scoring.Scorer | str | None = None,
+        eval_metric: scoring.Scorer | str | Callable | None = None,
         dir: str | os.PathLike | None = None,
         n_folds: int = 8,
         n_fold_sets: int = 1,
@@ -185,8 +186,8 @@ class TabularFitter:
 
         # infer and save scorer
         if eval_metric is None: eval_metric = scoring.DEFAULT_SCORERS[problem_type]
-        if isinstance(eval_metric, str): eval_metric = scoring.SCORERS[eval_metric]
-        joblib.dump(eval_metric, root / "scorer.joblib", compress=3)
+        scorer = scoring.make_scorer(eval_metric)
+        joblib.dump(scorer, root / "scorer.joblib", compress=3)
 
         # save fold indexes
         folds = {}
@@ -439,15 +440,32 @@ class TabularFitter:
         elif response_method == "predict_proba": k = "probas"
         else: raise ValueError(response_method)
 
-        shape = list(preds[f"test_{k}_0_0"].shape)
+        if f"test_{k}_0_0" not in preds:
+            if response_method == 'predict_proba':
+                shape = [preds["test_preds_0_0"].shape[0], self.n_classes]
+            else:
+                raise KeyError(f"Predictions for {model} do not contain test_{k}_0_0")
+
+        else:
+            shape = list(preds[f"test_{k}_0_0"].shape)
+
         shape[0] = self.n_samples
         oof_preds = np.zeros(shape)
 
         fold_i = 0
         cat_test_indexes = []
 
-        while f"test_{k}_{set_i}_{fold_i}" in preds:
-            test_preds = preds[f"test_{k}_{set_i}_{fold_i}"]
+        while (f"test_{k}_{set_i}_{fold_i}" in preds) or (f"test_preds_{set_i}_{fold_i}" in preds):
+
+            if f"test_{k}_{set_i}_{fold_i}" not in preds:
+                if response_method == 'predict_proba':
+                    test_preds = numpy_utils.one_hot(preds[f"test_preds_{set_i}_{fold_i}"], self.n_classes)
+                else:
+                    raise KeyError(f"Predictions for {model} do not contain test_{k}_{set_i}_{fold_i}")
+
+            else:
+                test_preds = preds[f"test_{k}_{set_i}_{fold_i}"]
+
             test_index = preds[f"test_index_{set_i}_{fold_i}"]
             oof_preds[test_index] = test_preds
 
@@ -574,6 +592,7 @@ class TabularFitter:
         stack_models: str | Sequence[str] | None = None,
         passthrough: bool = True,
         response_method: ResponseMethod | Literal['auto'] = "auto",
+        use_unlabeled: bool = True,
 
         fit_fn: Callable[
             [Any, pl.DataFrame, pl.Series, pl.DataFrame | None], python_utils.HasPredict
@@ -596,6 +615,8 @@ class TabularFitter:
                 When True, training data includes predictions as well as the original training data.
             response_method: Specifies whether to call predict_proba or predict on ``stack_models`` for stacking.
                 By default uses predict_proba for classification, otherwise predict.
+            use_unlabeled: if ``model`` doesn't use unlabeled data, setting this to False skips potentially expensive
+                operation of getting transformer and stack_models predictions on the unlabeled data.
             fit_fn: Function which fits model to X, y and X_unlabeled dataframes.
                 Defaults to ``model.fit(X, y)``.
         """
@@ -651,14 +672,17 @@ class TabularFitter:
                         fitted_model = self._cached_load(fitted_model_dir, joblib.load)
                     else:
 
-                        X_unlabeled_fold = self.get_stacked_X_unlabeled(
-                            set_i=set_i,
-                            fold_i=fold_i,
-                            stack_models=stack_models,
-                            transformer=transformer,
-                            passthrough=passthrough,
-                            response_method=response_method
-                        )
+                        if use_unlabeled and self.X_unlabeled is not None:
+                            X_unlabeled_fold = self.get_stacked_X_unlabeled(
+                                set_i=set_i,
+                                fold_i=fold_i,
+                                stack_models=stack_models,
+                                transformer=transformer,
+                                passthrough=passthrough,
+                                response_method=response_method
+                            )
+                        else:
+                            X_unlabeled_fold = None
 
                         fitted_model = fit_fn(model, X_train, y_train, X_unlabeled_fold)
                         joblib.dump(fitted_model, fitted_model_dir, compress=3)
@@ -752,6 +776,7 @@ class TabularFitter:
         stack_models: str | Sequence[str] | None = None,
         passthrough: bool = True,
         response_method: ResponseMethod | Literal['auto'] = "auto",
+        use_unlabeled: bool = True,
 
         fit_fn: Callable[
             [Any, pl.DataFrame, pl.Series, pl.DataFrame | None], python_utils.HasPredict
@@ -774,6 +799,8 @@ class TabularFitter:
                 When True, training data includes predictions as well as the original training data.
             response_method: Specifies whether to call predict_proba or predict on ``stack_models`` for stacking.
                 By default uses predict_proba for classification, otherwise predict.
+            use_unlabeled: if ``model`` doesn't use unlabeled data, setting this to False skips potentially expensive
+                operation of getting transformer and stack_models predictions on the unlabeled data.
             fit_fn: Function which fits transformer to X, y and X_unlabeled dataframes.
                 For transformers that don't use labels it may be beneficial to fit ``stack(X, X_unlabeled)``.
                 Defaults to ``transformer.fit(X, y)``.
@@ -826,14 +853,18 @@ class TabularFitter:
                         X_train = X[train_index]
                         y_train = self.y[train_index]
 
-                        X_unlabeled_fold = self.get_stacked_X_unlabeled(
-                            set_i=set_i,
-                            fold_i=fold_i,
-                            stack_models=stack_models,
-                            transformer=pre_transformer,
-                            passthrough=passthrough,
-                            response_method=response_method
-                        )
+                        if use_unlabeled and self.X_unlabeled is not None:
+                            X_unlabeled_fold = self.get_stacked_X_unlabeled(
+                                set_i=set_i,
+                                fold_i=fold_i,
+                                stack_models=stack_models,
+                                transformer=transformer,
+                                passthrough=passthrough,
+                                response_method=response_method
+                            )
+                        else:
+                            X_unlabeled_fold = None
+
 
                         fitted_transformer = fit_fn(transformer, X_train, y_train, X_unlabeled_fold)
                         obj_qualname = python_utils.get_qualname(fitted_transformer)
@@ -864,14 +895,18 @@ class TabularFitter:
 
                     else:
 
-                        X_unlabeled_fold = self.get_stacked_X_unlabeled(
-                            set_i=set_i,
-                            fold_i=0, # we can't meaningfully average dataframes, so just take 1st fold
-                            stack_models=stack_models,
-                            transformer=pre_transformer,
-                            passthrough=passthrough,
-                            response_method=response_method
-                        )
+                        if use_unlabeled and self.X_unlabeled is not None:
+                            X_unlabeled_fold = self.get_stacked_X_unlabeled(
+                                set_i=set_i,
+                                fold_i=0,  # we can't meaningfully average dataframes, so just take 1st fold
+                                stack_models=stack_models,
+                                transformer=transformer,
+                                passthrough=passthrough,
+                                response_method=response_method
+                            )
+                        else:
+                            X_unlabeled_fold = None
+
 
                         fitted_transformer = fit_fn(transformer, X, self.y, X_unlabeled_fold)
                         obj_qualname = python_utils.get_qualname(fitted_transformer)
@@ -960,7 +995,7 @@ class TabularFitter:
         model: str,
         set_i: int,
         fold_i: int,
-        response_method: ResponseMethod | Literal['proba_or_onehot'],
+        response_method: ResponseMethod,
     ) -> np.ndarray:
         """Predict on new data using models and transformers from one fold.
 
@@ -992,12 +1027,12 @@ class TabularFitter:
         fold_i = config["fold_map"][str(fold_i)]
         fitted_model = self._cached_load(model_dir / f"model-{set_i}-{fold_i}.joblib", joblib.load)
 
-        if response_method == "proba_or_onehot":
+        if response_method == "predict_proba":
             if config["supports_proba"]:
                 y = np.asarray(fitted_model.predict_proba(X))
             else:
                 y = np.asarray(fitted_model.predict(X))
-                y = numpy_utils.one_hot(y)
+                y = numpy_utils.one_hot(y, self.n_classes)
 
         else:
             y = np.asarray(getattr(fitted_model, response_method)(X))
@@ -1050,7 +1085,7 @@ class TabularFitter:
         )
 
 
-    def _predict_numpy(self, X: pl.DataFrame | Any, model: str, response_method: ResponseMethod | Literal['auto', 'proba_or_onehot'] = 'auto'):
+    def _predict_numpy(self, X: pl.DataFrame | Any, model: str, response_method: ResponseMethod | Literal['auto'] = 'auto'):
         """
         Args:
             X: data to predict labels for.
@@ -1063,7 +1098,7 @@ class TabularFitter:
         X = self.auto_encoder.transform_X(X)
 
         if response_method == 'auto':
-            if self.is_classification(): response_method = 'proba_or_onehot'
+            if self.is_classification(): response_method = 'predict_proba'
             else: response_method = 'predict'
 
         if self.is_classification():
@@ -1092,7 +1127,7 @@ class TabularFitter:
             model: name of the model to use for prediction.
 
         """
-        return self._predict_numpy(X, model, 'proba_or_onehot')
+        return self._predict_numpy(X, model, 'predict_proba')
 
     def predict(self, X: pl.DataFrame | Any, model: str):
         """Predicts the label for specified data and returns as a Series.
@@ -1102,7 +1137,7 @@ class TabularFitter:
             model: name of the model to use for prediction.
         """
         if self.is_classification():
-            probas = self._predict_numpy(X, model, response_method='proba_or_onehot')
+            probas = self._predict_numpy(X, model, response_method='predict_proba')
             preds = np.argmax(probas, -1)
         else:
             preds = self._predict_numpy(X, model, response_method='predict')

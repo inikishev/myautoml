@@ -207,7 +207,9 @@ def write_json(d: Mapping, file: str | os.PathLike):
         json.dump(d, f)
 
 def get_qualname(obj):
-    class_ = obj.__class__
+    if hasattr(obj, "__name__"): class_ = obj
+    else: class_ = obj.__class__
+
     module = class_.__module__
     if module == 'builtins': return class_.__qualname__
     return module + '.' + class_.__qualname__
