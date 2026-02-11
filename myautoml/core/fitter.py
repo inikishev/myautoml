@@ -310,6 +310,12 @@ class TabularFitter:
 
         return models["name"].to_list()
 
+    def rename_model(self, current_name: str, new_name: str):
+        fitter_utils.rename_model(self, current_name, new_name)
+
+    def rename_transformer(self, current_name: str, new_name: str):
+        fitter_utils.rename_transformer(self, current_name, new_name)
+
     def preview_transformed(
         self,
         transformer: str | None = None,

@@ -284,3 +284,44 @@ def _get_fitted_configs(self: "TabularFitter"):
             get_children_(transformer_configs, transformer)
 
     return model_configs, transformer_configs
+
+def rename_model(self: "TabularFitter", current_name: str, new_name: str):
+    if current_name not in os.listdir(self.root / "models"):
+        raise RuntimeError(f"model {current_name} doesn't exist")
+
+    # rename dir
+    os.rename(self.root / "models" / current_name, self.root / "models" / new_name)
+
+    # rename in all configs
+    dirs = list((self.root / "models").iterdir()) + list((self.root / "transformers").iterdir())
+    for estimator in dirs:
+        if "config.json" in os.listdir(estimator):
+
+            with open(estimator / "config.json", "r", encoding="utf-8") as f: config = json.load(f)
+
+            if config["stack_models"] is not None:
+                config["stack_models"] = [m if m!=current_name else new_name for m in config["stack_models"]]
+                with open(estimator / "config.json", "r", encoding="utf-8") as f: json.dump(config, f)
+
+
+def rename_transformer(self: "TabularFitter", current_name: str, new_name: str):
+    if current_name not in os.listdir(self.root / "transformers"):
+        raise RuntimeError(f"transformer {current_name} doesn't exist")
+
+    # rename dir
+    os.rename(self.root / "transformers" / current_name, self.root / "transformers" / new_name)
+
+    # rename in all configs
+    dirs = list((self.root / "models").iterdir()) + list((self.root / "transformers").iterdir())
+    for estimator in dirs:
+        if "config.json" in os.listdir(estimator):
+            with open(estimator / "config.json", "r", encoding="utf-8") as f: config = json.load(f)
+
+            if "transformer" in config and config["transformer"] == current_name:
+                config["transformer"] = new_name
+                with open(estimator / "config.json", "r", encoding="utf-8") as f: json.dump(config, f)
+
+            if "pre_transformer" in config and config["pre_transformer"] == current_name:
+                config["pre_transformer"] = new_name
+                with open(estimator / "config.json", "r", encoding="utf-8") as f: json.dump(config, f)
+
