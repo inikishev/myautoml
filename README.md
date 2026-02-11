@@ -10,7 +10,7 @@ Following Autogluon's strategy (since it seeme to win all AutoML benchmarks), I 
 
 #### 1. Initialize
 
-First time you run this code, TabularFitter creates a directory where all your models are saved.  Next time you run it, the directory will be loaded and all your models will be there. No model you fit goes to waste - ensembles from many diverse models are extremely powerful.
+First time you run this code, TabularFitter creates a directory where all your models are saved as well as other stuff such as fold indexes. Next time you run it, the directory will be loaded and all your models will be there, and you can continue fitting new models. No model you fit goes to waste - ensembles from many diverse models are extremely powerful.
 
 ```python
 import polars as pl

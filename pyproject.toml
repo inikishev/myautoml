@@ -11,9 +11,31 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "myautoml"
+description = "Library that I use for kaggle competitions. This is kind of like Autogluon but you decide what models you fit, and all models you fit are saved for later usage in ensembling, stacking, etc."
 version = "0.0.1"
 requires-python = ">=3.12"
 dependencies = [
+    "numpy",
+    "scikit-learn",
+    "polars",
+]
+readme = "README.md"
+authors = [
+  {name = "Ivan Nikishev", email = "nkshv2@gmail.com"},
+]
+license = {file = "LICENSE"}
+keywords = ["optimization", "optimizers", "torch", "neural networks", "zeroth order", "second order"]
+
+
+[project.urls]
+Homepage = "https://github.com/inikishev/myautoml"
+Repository = "https://github.com/inikishev/myautoml"
+Issues = "https://github.com/inikishev/myautoml/isses"
+
+
+[tool.pytest.ini_options]
+addopts = [
+    "--import-mode=importlib",
 ]
 
 [tool.setuptools.packages]
