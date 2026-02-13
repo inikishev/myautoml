@@ -365,12 +365,12 @@ class TabularFitter:
 
         for model in (self.root / "models").iterdir():
             if "done.txt" not in os.listdir(model):
-                self.logger.info("Deleting unfitted model %r", model)
+                self.logger.info("Deleting unfitted model %s", str(model))
                 shutil.rmtree(model)
 
         for transformer in (self.root / "transformers").iterdir():
             if "done.txt" not in os.listdir(transformer):
-                self.logger.info("Deleting unfitted transformer %r", transformer)
+                self.logger.info("Deleting unfitted transformer %s", str(transformer))
                 shutil.rmtree(transformer)
 
     def _cached_load(self, path: str | os.PathLike, loader: Callable) -> Any:
