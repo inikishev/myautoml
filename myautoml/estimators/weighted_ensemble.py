@@ -224,8 +224,9 @@ class GreedyWeightedEnsembleRegressor(TransformerMixin, BaseEstimator):
 
     def predict(self, X):
         check_is_fitted(self)
+
+        # can't use validate_data(self, X=X, reset=False, ensure_all_finite=False)
         # X might not have some columns seen during fit as they have a weight of 0
-        # validate_data(self, X=X, reset=False, ensure_all_finite=False)
         X = to_dataframe(X)
         if not set(X.columns).issuperset(self.required_cols_):
             missing = self.required_cols_.difference(X.columns)

@@ -1,6 +1,8 @@
+import tempfile
 import shutil
 import json
 import logging
+from contextlib import nullcontext
 import os
 import random
 import string
@@ -69,8 +71,9 @@ class TabularFitter:
 
         self._temp_load_cache: dict[str, Any] = {}
         self._temp_predict_cache: dict[tuple[str, int, int, str], np.ndarray] = {}
-        self._temp_transform_cache: dict[tuple[str, int, str], pl.DataFrame] = {}
+        self._temp_transform_cache: dict[str, str] = {}
         self._temp_caching_enabled: bool = False
+        self._tmpdir: str | None = None
         """Used internally"""
 
     def initialize(
@@ -375,15 +378,18 @@ class TabularFitter:
             self.logger.debug("Enabling temporary caching")
             self._temp_caching_enabled = True
 
-        try:
-            yield
+        with (tempfile.TemporaryDirectory() if self._temp_caching_enabled else nullcontext()) as tmpdir:
+            self._tmpdir = tmpdir
+            try:
+                yield
 
-        finally:
-            self.logger.debug("Disabling temporary caching")
-            self._temp_predict_cache.clear()
-            self._temp_transform_cache.clear()
-            if self.caching_level != 2: self._temp_load_cache.clear()
-            self._temp_caching_enabled = False
+            finally:
+                self.logger.debug("Disabling temporary caching")
+                self._tmpdir = None
+                self._temp_predict_cache.clear()
+                self._temp_transform_cache.clear()
+                if self.caching_level != 2: self._temp_load_cache.clear()
+                self._temp_caching_enabled = False
 
     def transform_oof(self, set_i: int, transformer: str) -> pl.DataFrame:
         """(Internal method) Returns ``self.X`` transformed by out-of-fold (if applicable) ``transformer`` for fold set ``set_i``."""
@@ -979,6 +985,7 @@ class TabularFitter:
             set_i: index of fold set.
             fold_i: index of fold.
         """
+        self.logger.debug("_transform_new: transformer=%s, set_i=%i, fold_i=%i", transformer, set_i, fold_i)
 
         transformer_dir = self.root / "transformers" / transformer
         if not transformer_dir.exists():
@@ -990,11 +997,12 @@ class TabularFitter:
         if config["use_folds"]: mapped_fold_i = str(config["fold_map"][str(fold_i)])
         else: mapped_fold_i = "ALL"
 
-        cache_key = (transformer, set_i, mapped_fold_i)
+        cache_key = f"{transformer}--{set_i}--{mapped_fold_i}"
         if self._temp_caching_enabled:
             if cache_key in self._temp_transform_cache:
-                self.logger.debug("Loading cached transformed dataframe under key %r", cache_key)
-                return self._temp_transform_cache[cache_key]
+                self.logger.debug("Loading cached transformed dataframe from %s", self._temp_transform_cache[cache_key])
+                assert self._tmpdir is not None
+                return pl.read_parquet(self._temp_transform_cache[cache_key])
 
         fitted_transformer = self._cached_load(transformer_dir / f"transformer-{set_i}-{mapped_fold_i}.joblib", joblib.load)
 
@@ -1023,9 +1031,11 @@ class TabularFitter:
         transformed = polars_utils.to_dataframe(fitted_transformer.transform(X))
 
         if self._temp_caching_enabled:
-            self.logger.debug("Saving cached transformed dataframe under key %r", cache_key)
-            self._temp_transform_cache[cache_key] = transformed
-            # TODO may be worth inverstigating saving to disk rather than RAM, if dataframe is huge
+            assert self._tmpdir is not None
+            save_dir = os.path.join(self._tmpdir, f'{cache_key}.parquet')
+            self.logger.debug("Saving cached transformed dataframe to %s", save_dir)
+            transformed.write_parquet(save_dir)
+            self._temp_transform_cache[cache_key] = save_dir
 
         return transformed
 
@@ -1046,6 +1056,8 @@ class TabularFitter:
             fold_i: index of fold.
             response_method: what to call on ``model``.
         """
+        self.logger.debug("_predict_new: model=%s, set_i=%i, fold_i=%i, response_method=%s",
+                          model, set_i, fold_i,  response_method)
 
         model_dir = self.root / "models" / model
         if not model_dir.exists():
@@ -1125,6 +1137,9 @@ class TabularFitter:
             response_method: Specifies whether to call ``predict_proba`` or ``predict`` on ``stack_models`` for stacking.
                 By default uses ``predict_proba`` for classification, otherwise ``predict``.
         """
+        self.logger.debug(
+            "_get_stacked_X_new: set_i=%i, fold_i=%i, stack_models=%r, transformer=%r, passthrough=%r, response_method=%s",
+            set_i, fold_i, stack_models, transformer, passthrough, response_method)
 
         if (passthrough is False) and (transformer is not None):
             raise RuntimeError(f"Passthrough is False but {transformer = }")
