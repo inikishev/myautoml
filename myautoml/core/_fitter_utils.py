@@ -146,7 +146,7 @@ class _FoldSet(UserDict[int, dict[int, tuple[np.ndarray, np.ndarray]]]):
 
 
 
-def validate_test_indexes(cat_test_indexes, n_samples: int):
+def _validate_test_indexes(cat_test_indexes, n_samples: int):
     if isinstance(cat_test_indexes, np.ndarray): cat_test_indexes = cat_test_indexes.tolist()
 
     if len(cat_test_indexes) != n_samples:
@@ -161,7 +161,7 @@ def validate_test_indexes(cat_test_indexes, n_samples: int):
 
 
 
-def validate_preds(preds: np.ndarray, n_samples: int, n_targets: int):
+def _validate_preds(preds: np.ndarray, n_samples: int, n_targets: int):
     msg = (
         "``model.predict`` should return array of shape (n_samples, n_targets), "
         f"or (n_samples, ) is allowed if n_targets=1,"
@@ -185,7 +185,7 @@ def validate_preds(preds: np.ndarray, n_samples: int, n_targets: int):
 
     return preds
 
-def validate_probas(probas: np.ndarray, n_samples: int, n_classes: int):
+def _validate_probas(probas: np.ndarray, n_samples: int, n_classes: int):
     msg = (
         "``model.predict_proba`` should return array of shape (n_samples, n_classes), "
         f"but {n_samples = }, {n_classes = }, and returned array has shape {probas.shape}"
@@ -326,7 +326,40 @@ def rename_transformer(self: "TabularFitter", current_name: str, new_name: str):
                 config["pre_transformer"] = new_name
                 with open(estimator / "config.json", "w", encoding="utf-8") as f: json.dump(config, f)
 
-def min_fit_sec_for_caching(X: np.ndarray | pl.DataFrame):
+def _min_fit_sec_for_caching(X: np.ndarray | pl.DataFrame):
     numel = math.prod(X.shape)
     if numel > 10 ** 8: return 1e10 # avoid caching more than ~1GB
     return (math.prod(X.shape) * 100) ** 0.5
+
+
+class _SavedPreds(UserDict[int, dict[int, dict[str, str]]]):
+    def __init__(self, dir):
+        self.dir = dir
+        self.types: set[str] = set()
+
+        folds = defaultdict(lambda: defaultdict(dict))
+        for filename in os.listdir(dir):
+
+            filepath = os.path.join(dir, filename)
+            type, set_i, fold_i = ".".join(filename.rsplit(".", 1)[:-1]).rsplit("-", 2)
+
+            assert type in ("test_index", "test_preds", "test_proba"), type
+            self.types.add(type)
+
+            set_i = int(set_i)
+            fold_i = int(fold_i)
+
+            folds[set_i][fold_i][type] = filepath
+
+        super().__init__({k: dict(v) for k,v in folds.items()})
+
+    @property
+    def n_fold_sets(self): return len(self)
+    @property
+    def n_folds(self): return len(self[0])
+
+    def load(self, type: Literal["test_index", "test_preds", "test_proba"], set_i: int, fold_i: int) -> np.ndarray:
+        filename = f"{type}-{set_i}-{fold_i}.npz"
+        d = np.load(os.path.join(self.dir, filename))
+        assert len(d.keys()) == 1, list(d.keys())
+        return d["data"]

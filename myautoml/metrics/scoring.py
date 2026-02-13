@@ -8,7 +8,7 @@ import sklearn.metrics
 from ..utils import numpy_utils, python_utils
 
 if TYPE_CHECKING:
-    from ..core.fitter_utils import ProblemType
+    from ..core._fitter_utils import ProblemType
 
 
 class Scorer:

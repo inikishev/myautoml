@@ -23,7 +23,7 @@ from ..metrics import scoring
 from ..polars_transformers.auto_encoder import AutoEncoder, _AutoEncoderWrapper
 from ..utils import numpy_utils, polars_utils, python_utils
 from ..utils.rng import RNG
-from . import fitter_utils
+from . import _fitter_utils
 
 ResponseMethod = Literal["predict", "predict_proba"]
 
@@ -44,7 +44,7 @@ class TabularFitter:
             - 2: Greedy caching - All models and transformers are cached in RAM and are never unloaded.
         max_cache_mb: maximum size of cache folder in GB.
     """
-    problem_type: fitter_utils.ProblemType
+    problem_type: _fitter_utils.ProblemType
     """One of 'binary', 'multiclass', 'multilabel', 'regression', 'multioutput', 'multitask'"""
 
     per_fold_info = False
@@ -86,7 +86,7 @@ class TabularFitter:
         X: pl.DataFrame | Any,
         y: str | pl.Series | Any,
         X_unlabeled=None,
-        problem_type: fitter_utils.ProblemType | None = None,
+        problem_type: _fitter_utils.ProblemType | None = None,
         eval_metric: scoring.Scorer | str | Callable | None = None,
         dir: str | os.PathLike | None = None,
         n_folds: int = 8,
@@ -179,7 +179,7 @@ class TabularFitter:
         joblib.dump(auto_encoder, root / "auto_encoder.joblib", compress=3)
 
         X, y = auto_encoder.transform_X_y(X, y)
-        fitter_utils._validate_and_log_features(X, self.logger)
+        _fitter_utils._validate_and_log_features(X, self.logger)
 
         X.write_parquet(root / "X.parquet")
         y.to_frame().write_parquet(root / "y.parquet")
@@ -189,7 +189,7 @@ class TabularFitter:
             X_unlabeled.write_parquet(root / "X_unlabeled.parquet")
 
         # save config
-        problem_type = cast(fitter_utils.ProblemType, auto_encoder.problem_type_)
+        problem_type = cast(_fitter_utils.ProblemType, auto_encoder.problem_type_)
         config = {"problem_type": problem_type}
         with open(root / "config.json", "w", encoding='utf-8') as f:
             json.dump(config, f)
@@ -248,10 +248,10 @@ class TabularFitter:
         # load other stuffs
         with open(self.root / "config.json", "r", encoding='utf-8') as f:
             config = json.load(f)
-            self.problem_type: fitter_utils.ProblemType = config["problem_type"]
+            self.problem_type: _fitter_utils.ProblemType = config["problem_type"]
 
         self.scorer: scoring.Scorer = joblib.load(self.root / "scorer.joblib")
-        self.fold_set = fitter_utils._FoldSet.from_file(self.root / "fold_indexes.npz")
+        self.fold_set = _fitter_utils._FoldSet.from_file(self.root / "fold_indexes.npz")
         self._n_classes = None
 
     def is_classification(self):
@@ -290,7 +290,7 @@ class TabularFitter:
         raise NotImplementedError(f"TODO support for {self.problem_type}")
 
     def _get_fitted_configs(self):
-        return fitter_utils._get_fitted_configs(self)
+        return _fitter_utils._get_fitted_configs(self)
 
     def list_fitted_models(self, sort="start_time"):
         models_d,_ = self._get_fitted_configs()
@@ -322,10 +322,10 @@ class TabularFitter:
         return models["name"].to_list()
 
     def rename_model(self, current_name: str, new_name: str):
-        fitter_utils.rename_model(self, current_name, new_name)
+        _fitter_utils.rename_model(self, current_name, new_name)
 
     def rename_transformer(self, current_name: str, new_name: str):
-        fitter_utils.rename_transformer(self, current_name, new_name)
+        _fitter_utils.rename_transformer(self, current_name, new_name)
 
     def preview_transformed(
         self,
@@ -416,20 +416,16 @@ class TabularFitter:
 
             # transformer is fitted to folds, can transform out-of-folds samples
             transformed_list: list[pl.DataFrame] = []
+            test_indexes = _fitter_utils._SavedPreds(transformer_dir / "test_indexes")
 
-            test_indexes: dict[str, np.ndarray] = self._cached_load(transformer_dir / "test_indexes.npz", np.load)
-            test_indexes = {k: v for k,v in test_indexes.items() if int(k.split("_")[-2]) == set_i}
-
-            if len(test_indexes) == 0:
-                keys = list(self._cached_load(transformer_dir / "fold_test_indices.npz", np.load).keys())
-                raise RuntimeError(f"Folds for transformer {transformer} have no indices for set {set_i}: {keys}")
-
-            for k, test_index in test_indexes.items():
+            for fold_i in range(test_indexes.n_folds):
 
                 # load transformer
-                fold_i = int(k.split("_")[-1])
                 fitted_transformer = self._cached_load(
                     transformer_dir / f"transformer-{set_i}-{fold_i}.joblib", joblib.load)
+
+                test_index = test_indexes.load("test_index", set_i=set_i, fold_i=fold_i)
+                assert np.issubdtype(test_index.dtype, np.integer)
 
                 # transform
                 oof = fitted_transformer.transform(X[test_index])
@@ -439,7 +435,7 @@ class TabularFitter:
                 transformed_list.append(polars_utils.to_dataframe(oof).with_columns(col))
 
             transformed = pl.concat(transformed_list).sort("__myautoml_col_id")
-            fitter_utils.validate_test_indexes(transformed["__myautoml_col_id"].to_list(), self.n_samples)
+            _fitter_utils._validate_test_indexes(transformed["__myautoml_col_id"].to_list(), self.n_samples)
             return transformed.drop("__myautoml_col_id")
 
 
@@ -458,49 +454,45 @@ class TabularFitter:
             response_method: Specifies whether to use predict_proba or predict.
         """
         model_dir = self.root / "models" / model
-        preds: dict[str, np.ndarray] = self._cached_load(model_dir / "predictions.npz", np.load)
+        preds = _fitter_utils._SavedPreds(model_dir / "predictions")
 
-        if response_method == "predict": k = "preds"
-        elif response_method == "predict_proba": k = "probas"
+        if response_method == "predict": k = "test_preds"
+        elif response_method == "predict_proba": k = "test_proba"
         else: raise ValueError(response_method)
 
-        if f"test_{k}_0_0" not in preds:
+        one_hot = False
+        if k not in preds.types:
+            self.logger.debug("%s doesn't support predict_proba, falling back to predict", model)
             if response_method == 'predict_proba':
-                shape = [preds["test_preds_0_0"].shape[0], self.n_classes]
+                one_hot = True
+                shape = [preds.load("test_preds", 0, 0).shape[0], self.n_classes]
             else:
-                raise KeyError(f"Predictions for {model} do not contain test_{k}_0_0")
+                raise KeyError(f"Predictions for {model} do not contain {k}")
 
         else:
-            shape = list(preds[f"test_{k}_0_0"].shape)
+            shape = list(preds.load(k, 0, 0).shape)
 
         shape[0] = self.n_samples
         oof_preds = np.zeros(shape)
 
-        fold_i = 0
         cat_test_indexes = []
 
-        while (f"test_{k}_{set_i}_{fold_i}" in preds) or (f"test_preds_{set_i}_{fold_i}" in preds):
+        for fold_i in range(preds.n_folds):
 
-            if f"test_{k}_{set_i}_{fold_i}" not in preds:
-                if response_method == 'predict_proba':
-                    test_preds = numpy_utils.one_hot(preds[f"test_preds_{set_i}_{fold_i}"], self.n_classes)
-                else:
-                    raise KeyError(f"Predictions for {model} do not contain test_{k}_{set_i}_{fold_i}")
-
+            if one_hot:
+                assert k == "test_proba"
+                test_preds = numpy_utils.one_hot(preds.load("test_preds", set_i, fold_i), self.n_classes)
             else:
-                test_preds = preds[f"test_{k}_{set_i}_{fold_i}"]
+                test_preds = preds.load(k, set_i, fold_i)
 
-            test_index = preds[f"test_index_{set_i}_{fold_i}"]
+            test_index = preds.load("test_index", set_i, fold_i)
+            assert np.issubdtype(test_index.dtype, np.integer)
             oof_preds[test_index] = test_preds
 
             fold_i += 1
             cat_test_indexes.extend(test_index.tolist())
 
-        if fold_i == 0:
-            keys = list(preds.keys())
-            raise RuntimeError(f"Folds for model {model} have no indices for set {set_i}: {keys}")
-
-        fitter_utils.validate_test_indexes(cat_test_indexes, self.n_samples)
+        _fitter_utils._validate_test_indexes(cat_test_indexes, self.n_samples)
         return oof_preds
 
     def _stack_preds(
@@ -640,7 +632,7 @@ class TabularFitter:
             response_method: Specifies whether to call predict_proba or predict on ``stack_models`` for stacking.
                 By default uses predict_proba for classification, otherwise predict.
             use_unlabeled: if ``model`` doesn't use unlabeled data, setting this to False skips potentially expensive
-                operation of getting transformer and stack_models predictions on the unlabeled data.
+                operation of getting ``transformer`` and ``stack_models`` predictions on the unlabeled data.
             fit_fn: Function which fits model to X, y and X_unlabeled dataframes.
                 Defaults to ``model.fit(X, y)``.
         """
@@ -658,10 +650,10 @@ class TabularFitter:
             raise RuntimeError(f"{model_dir} already exists, set a different name for a different model")
 
         model_dir.mkdir(exist_ok=True)
+        (model_dir / "predictions").mkdir(exist_ok=True)
 
         # fit to all folds
         scores = defaultdict(list)
-        data = {}
         supports_proba = False
         obj_qualname = None
         obj_repr = None
@@ -722,8 +714,8 @@ class TabularFitter:
                     preds_train = np.asarray(fitted_model.predict(X_train))
                     preds_test = np.asarray(fitted_model.predict(X_test))
 
-                    preds_train = fitter_utils.validate_preds(preds_train, X_train.shape[0], self.n_targets)
-                    preds_test = fitter_utils.validate_preds(preds_test, X_test.shape[0], self.n_targets)
+                    preds_train = _fitter_utils._validate_preds(preds_train, X_train.shape[0], self.n_targets)
+                    preds_test = _fitter_utils._validate_preds(preds_test, X_test.shape[0], self.n_targets)
 
                     proba_train = proba_test = None
                     if self.is_classification() and hasattr(fitted_model, "predict_proba"):
@@ -731,8 +723,8 @@ class TabularFitter:
                             proba_train = np.asarray(getattr(fitted_model, "predict_proba")(X_train))
                             proba_test = np.asarray(getattr(fitted_model, "predict_proba")(X_test))
 
-                            proba_train = fitter_utils.validate_probas(proba_train, X_train.shape[0], self.n_classes)
-                            proba_test = fitter_utils.validate_probas(proba_test, X_test.shape[0], self.n_classes)
+                            proba_train = _fitter_utils._validate_probas(proba_train, X_train.shape[0], self.n_classes)
+                            proba_test = _fitter_utils._validate_probas(proba_test, X_test.shape[0], self.n_classes)
 
                             supports_proba = True
                         except (NotImplementedError, AttributeError):
@@ -749,17 +741,15 @@ class TabularFitter:
                     scores["error_train"].append(float(error_train))
                     scores["error_test"].append(float(error_test))
 
-                    data[f"test_index_{set_i}_{fold_i}"] = test_index
-                    data[f"test_preds_{set_i}_{fold_i}"] = preds_test
+                    np.savez_compressed(model_dir / "predictions" / f"test_index-{set_i}-{fold_i}.npz", data=test_index)
+                    np.savez_compressed(model_dir / "predictions" / f"test_preds-{set_i}-{fold_i}.npz", data=preds_test)
 
                     if (proba_train is not None) and (proba_test is not None):
-                        data[f"test_probas_{set_i}_{fold_i}"] = proba_test
+                        np.savez_compressed(model_dir / "predictions" / f"test_proba-{set_i}-{fold_i}.npz", data=proba_test)
 
                     (self.logger.info if self.per_fold_info else self.logger.debug)(
                         "Set %i fold %i - %s: train = %.8f, test = %.8f",
                         set_i, fold_i, self.scorer.name, float(score_train), float(score_test))
-
-        np.savez_compressed(model_dir / "predictions.npz", **data)
 
         fit_sec = time.time() - start_time
         config = {
@@ -828,7 +818,7 @@ class TabularFitter:
             response_method: Specifies whether to call predict_proba or predict on ``stack_models`` for stacking.
                 By default uses predict_proba for classification, otherwise predict.
             use_unlabeled: if ``model`` doesn't use unlabeled data, setting this to False skips potentially expensive
-                operation of getting transformer and stack_models predictions on the unlabeled data.
+                operation of getting ``pre_transformer`` and ``stack_models`` predictions on the unlabeled data.
             fit_fn: Function which fits transformer to X, y and X_unlabeled dataframes.
                 For transformers that don't use labels it may be beneficial to fit ``stack(X, X_unlabeled)``.
                 Defaults to ``transformer.fit(X, y)``.
@@ -859,8 +849,8 @@ class TabularFitter:
                 fold_set, fold_map = self.fold_set.merge_folds(n_folds=max_folds)
                 n_transformers = fold_set.n_models
                 self.logger.info('Fitting %i transformers "%s"', n_transformers, name)
+                (transformer_dir / "test_indexes").mkdir()
 
-                data = {}
                 for set_i, folds in fold_set.items():
 
                     X = self.get_stacked_X(
@@ -899,9 +889,8 @@ class TabularFitter:
                         obj_repr = repr(fitted_transformer)[:10_000]
 
                         joblib.dump(fitted_transformer, fitted_dir, compress=3)
-                        data[f"test_index_{set_i}_{fold_i}"] = test_index
-
-                np.savez_compressed(transformer_dir / "test_indexes.npz", **data)
+                        np.savez_compressed(
+                            transformer_dir / "test_indexes" / f"test_index-{set_i}-{fold_i}.npz", data=test_index)
 
             else:
                 # fit without folds
@@ -928,7 +917,7 @@ class TabularFitter:
                                 set_i=set_i,
                                 fold_i=0,  # we can't meaningfully average dataframes, so just take 1st fold
                                 stack_models=stack_models,
-                                transformer=transformer,
+                                transformer=pre_transformer,
                                 passthrough=passthrough,
                                 response_method=response_method
                             )
@@ -1042,7 +1031,7 @@ class TabularFitter:
 
         if self._temp_caching_enabled:
             sec = time.perf_counter() - start
-            min_sec = fitter_utils.min_fit_sec_for_caching(X) / 500
+            min_sec = max(_fitter_utils._min_fit_sec_for_caching(X) / 500, 1)
 
             if sec > min_sec:
                 assert self._tmpdir is not None
@@ -1142,7 +1131,7 @@ class TabularFitter:
 
         if self._temp_caching_enabled:
             sec = time.perf_counter() - start
-            min_sec = fitter_utils.min_fit_sec_for_caching(y) / 1000
+            min_sec = max(_fitter_utils._min_fit_sec_for_caching(y) / 1000, 1)
 
             if sec > min_sec:
                 assert cache_key not in self._temp_predict_cache

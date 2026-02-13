@@ -23,7 +23,7 @@ from .select import Cast, Collect, DropCols, DropConstant, RemoveDuplicates, Sel
 from .tonumpy import ToNumpy
 
 if TYPE_CHECKING:
-    from ..core.fitter_utils import ProblemType
+    from ..core._fitter_utils import ProblemType
 
 def _infer_problem_type(y: pl.Series) -> "tuple[ProblemType, str]":
 
