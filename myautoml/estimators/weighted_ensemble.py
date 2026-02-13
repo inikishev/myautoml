@@ -20,7 +20,7 @@ from ..metrics.scoring import make_scorer
 from ..utils.polars_utils import to_dataframe, to_series
 
 
-def _get_individual_preds(X) -> dict[str, np.ndarray]:
+def _get_individual_preds(X) -> tuple[dict[str, np.ndarray], int]:
     X = to_dataframe(X)
 
     models = set()
@@ -48,7 +48,7 @@ def _get_individual_preds(X) -> dict[str, np.ndarray]:
         model_cols = [f"{model}_{col}" for col in required_cols]
         preds[model] = X.select(model_cols).to_numpy()
 
-    return preds
+    return preds, len(first_ind)
 
 def _make_int(i: int | float, l: int):
     if isinstance(i, int):
@@ -117,12 +117,12 @@ class GreedyWeightedEnsembleRegressor(TransformerMixin, BaseEstimator):
         else:
             y = np.asarray(y)
 
-        preds_dict = _get_individual_preds(X)
+        preds_dict, self.n_out_ = _get_individual_preds(X)
+        test_pred = next(iter(preds_dict.values()))
         if self.is_classification:
-            test_pred = next(iter(preds_dict.values()))
             if np.squeeze(test_pred).ndim == 1: raise RuntimeError("X must contain probabilites predicted by each model.")
 
-        preds_np = np.stack(list(preds_dict.values()), 0)
+        preds_np = np.stack(list(preds_dict.values()), 0) # (n_models, n_rows, *pred_dims)
         names = np.asarray(list(preds_dict.keys()), dtype=np.str_)
 
         scorer = make_scorer(self.scoring)
@@ -216,6 +216,7 @@ class GreedyWeightedEnsembleRegressor(TransformerMixin, BaseEstimator):
 
         # Normalize and store weights
         self.weights_ = {model: w for model, w  in zip(names, weights / weights.sum()) if w > 0}
+        self.required_cols_ = set(f"{model}_{i}" for model in self.weights_.keys() for i in range(self.n_out_))
         return self
 
     def __myautoml_used_models__(self):
@@ -223,9 +224,18 @@ class GreedyWeightedEnsembleRegressor(TransformerMixin, BaseEstimator):
 
     def predict(self, X):
         check_is_fitted(self)
-        validate_data(self, X=X, reset=False, ensure_all_finite=False)
+        # X might not have some columns seen during fit as they have a weight of 0
+        # validate_data(self, X=X, reset=False, ensure_all_finite=False)
+        X = to_dataframe(X)
+        if not set(X.columns).issuperset(self.required_cols_):
+            missing = self.required_cols_.difference(X.columns)
+            raise RuntimeError(f"X is missing the following columns: {missing}")
 
-        preds = _get_individual_preds(X)
+
+        preds, n_out = _get_individual_preds(X)
+        if n_out != self.n_out_:
+            raise RuntimeError(f"X has {n_out} columns per model, while {self.n_out_} were seen during fit")
+
         ensemble_preds = np.zeros_like(next(iter(preds.values())))
         for k, w in self.weights_.items():
             ensemble_preds += preds[k] * w
