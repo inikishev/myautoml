@@ -73,7 +73,7 @@ class GreedyWeightedEnsembleRegressor(TransformerMixin, BaseEstimator):
         p: number/fraction of models in each bag. Defaults to 0.5.
         n_init: number/fraction of best-performing models to initialize each bag with. Defaults to 0.1.
         max_iter: maximum number of iterations per bag. Defaults to 1_000_000.
-        max_no_improvement: maximum number of hill-climbing without improvement. Defaults to 10.
+        max_no_improvement: maximum number of hill-climbing without improvement. Defaults to 3.
         subsample: number/fraction of rows to subsample in each bag, can make this much faster. Defaults to 1_000_000.
 
     """
@@ -86,7 +86,7 @@ class GreedyWeightedEnsembleRegressor(TransformerMixin, BaseEstimator):
         p: int | float = 0.5,
         n_init: int | float | None = 0.1,
         max_iter: int = 1_000_000,
-        max_no_improvement: int = 10,
+        max_no_improvement: int = 3,
         subsample: int | float | None = 1_000_000,
         random_state=0,
     ):
@@ -235,7 +235,7 @@ class GreedyWeightedEnsembleClassifier(GreedyWeightedEnsembleRegressor):
         p: number/fraction of models in each bag. Defaults to 0.5.
         n_init: number/fraction of best-performing models to initialize each bag with. Defaults to 0.1.
         max_iter: maximum number of iterations per bag. Defaults to 1_000_000.
-        max_no_improvement: maximum number of hill-climbing without improvement. Defaults to 10.
+        max_no_improvement: maximum number of hill-climbing without improvement. Defaults to 3.
         subsample: number/fraction of rows to subsample in each bag, can make this much faster. Defaults to 1_000_000.
 
     """
@@ -247,7 +247,7 @@ class GreedyWeightedEnsembleClassifier(GreedyWeightedEnsembleRegressor):
         p: int | float = 0.5,
         n_init: int | float | None = 0.1,
         max_iter: int = 1_000_000,
-        max_no_improvement: int = 10,
+        max_no_improvement: int = 3,
         subsample: int | float | None = 1_000_000,
         random_state=0,
     ):
