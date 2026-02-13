@@ -129,7 +129,7 @@ class TabularFitter:
                 # check if myautoml already exists
                 for d in sorted(os.listdir()):
                     if d.startswith("myautoml-"):
-                        if dir is not None:
+                        if dir is None:
                             raise RuntimeError(
                                 "dir is not specified but are multiple directories starting with 'myautoml-'. "
                                 "Specify `dir` manually.")
