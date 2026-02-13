@@ -223,7 +223,7 @@ class TabularFitter:
         # add log file handler
         if str(self.root) not in self.file_handlers:
             file_handler = logging.FileHandler(self.root / "myautoml.log")
-            file_handler.setLevel(logging.DEBUG)
+            file_handler.setLevel(logging.INFO)
             file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
             self.logger.addHandler(file_handler)
             self.file_handlers[str(self.root)] = file_handler
