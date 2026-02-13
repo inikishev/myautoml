@@ -306,10 +306,18 @@ class TabularFitter:
 
     def list_fitted_models(self, sort="start_time"):
         models_d,_ = self._get_fitted_configs()
+        if len(models_d) == 0: raise RuntimeError("There are no fitted models.")
         models = pl.from_dicts(list(models_d.values()))
         cols = ("name", "transformer", "stack_level", "score_train_mean", "score_test_mean")
         models = models.sort(sort).select(*cols, pl.all().exclude(cols))
         return models
+
+    def list_fitted_transformers(self, sort="start_time"):
+        _,transformers_d = self._get_fitted_configs()
+        if len(transformers_d) == 0: raise RuntimeError("There are no fitted transformers.")
+        transformers = pl.from_dicts(list(transformers_d.values()))
+        transformers = transformers.sort(sort).select("name", pl.all().exclude("name"))
+        return transformers
 
     def select_models(
         self,
@@ -352,11 +360,6 @@ class TabularFitter:
             passthrough=passthrough, response_method=response_method,
         )
 
-    def list_fitted_transformers(self, sort="start_time"):
-        _,transformers_d = self._get_fitted_configs()
-        transformers = pl.from_dicts(list(transformers_d.values()))
-        transformers = transformers.sort(sort).select("name", pl.all().exclude("name"))
-        return transformers
 
     def delete_unfitted(self):
 
