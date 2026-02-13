@@ -151,7 +151,13 @@ class TabularFitter:
                 return
             raise RuntimeError(f"Directory {root} already exists. Set `load_if_exists=True` or use `load` method.")
 
-        root.mkdir(exist_ok=True)
+        try:
+            root.mkdir(exist_ok=False)
+        except FileExistsError:
+            if load_if_exists and (root / "done.txt").exists():
+                self.load(root)
+                return
+            raise RuntimeError(f"Directory {root} already exists. Set `load_if_exists=True` or use `load` method.") from None
 
         if self._logging_file_handler is not None: self.logger.removeHandler(self._logging_file_handler)
         file_handler = logging.FileHandler(root / "myautoml.log")

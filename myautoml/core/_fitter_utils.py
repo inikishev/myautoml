@@ -287,8 +287,11 @@ def _get_fitted_configs(self: "TabularFitter"):
     return model_configs, transformer_configs
 
 def rename_model(self: "TabularFitter", current_name: str, new_name: str):
-    if current_name not in os.listdir(self.root / "models"):
-        raise RuntimeError(f"model {current_name} doesn't exist")
+    names = os.listdir(self.root / "models")
+    if current_name not in names:
+        raise RuntimeError(f"Model {current_name} doesn't exist")
+    if new_name in names:
+        raise FileExistsError(f"Model with name {new_name} already exists.")
 
     # rename dir
     os.rename(self.root / "models" / current_name, self.root / "models" / new_name)
@@ -306,8 +309,12 @@ def rename_model(self: "TabularFitter", current_name: str, new_name: str):
 
 
 def rename_transformer(self: "TabularFitter", current_name: str, new_name: str):
-    if current_name not in os.listdir(self.root / "transformers"):
-        raise RuntimeError(f"transformer {current_name} doesn't exist")
+    names = os.listdir(self.root / "models")
+    if current_name not in names:
+        raise RuntimeError(f"Transformer {current_name} doesn't exist")
+    if new_name in names:
+        raise FileExistsError(f"Transformer with name {new_name} already exists.")
+
 
     # rename dir
     os.rename(self.root / "transformers" / current_name, self.root / "transformers" / new_name)
