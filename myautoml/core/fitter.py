@@ -1,3 +1,4 @@
+import atexit
 import json
 import logging
 import math
@@ -81,6 +82,8 @@ class TabularFitter:
         self._tmpdir: str | None = None
         """Used internally"""
 
+        atexit.register(self._cleanup_temp_files)
+
     def initialize(
         self,
         X: pl.DataFrame | Any,
@@ -151,6 +154,7 @@ class TabularFitter:
                 return
             raise RuntimeError(f"Directory {root} already exists. Set `load_if_exists=True` or use `load` method.")
 
+        # This is apparently a bit safer
         try:
             root.mkdir(exist_ok=False)
         except FileExistsError:
@@ -159,6 +163,7 @@ class TabularFitter:
                 return
             raise RuntimeError(f"Directory {root} already exists. Set `load_if_exists=True` or use `load` method.") from None
 
+        # Only keep file handler for current working directory
         if self._logging_file_handler is not None: self.logger.removeHandler(self._logging_file_handler)
         file_handler = logging.FileHandler(root / "myautoml.log")
         file_handler.setLevel(logging.DEBUG)
@@ -378,30 +383,40 @@ class TabularFitter:
 
         return obj
 
+    def _cleanup_temp_files(self):
+        """runs at exit to make sure temp files are deleted"""
+        if hasattr(self, '_tmpdir') and self._tmpdir is not None:
+            try: shutil.rmtree(self._tmpdir, ignore_errors=True)
+            except Exception: pass
+
     @contextmanager
     def _temp_caching_context(self):
 
         assert self._temp_caching_enabled is False
+        assert self._tmpdir is None
         assert len(self._temp_predict_cache) == 0
         assert len(self._temp_transform_cache) == 0
         if self.caching_level != 2: assert len(self._temp_load_cache) == 0
 
-        if self.caching_level != 0:
-            self.logger.debug("Enabling temporary caching")
-            self._temp_caching_enabled = True
+        try:
 
-        with (tempfile.TemporaryDirectory() if self._temp_caching_enabled else nullcontext()) as tmpdir:
-            self._tmpdir = tmpdir
-            try:
-                yield
+            if self.caching_level != 0:
+                self.logger.debug("Enabling temporary caching")
+                self._temp_caching_enabled = True
+                self._tmpdir = tempfile.mkdtemp()
 
-            finally:
-                self.logger.debug("Disabling temporary caching")
-                self._tmpdir = None
-                self._temp_predict_cache.clear()
-                self._temp_transform_cache.clear()
-                if self.caching_level != 2: self._temp_load_cache.clear()
-                self._temp_caching_enabled = False
+            yield
+
+        finally:
+            self.logger.debug("Disabling temporary caching")
+
+            if self._tmpdir is not None: shutil.rmtree(self._tmpdir)
+            self._tmpdir = None
+
+            self._temp_predict_cache.clear()
+            self._temp_transform_cache.clear()
+            if self.caching_level != 2: self._temp_load_cache.clear()
+            self._temp_caching_enabled = False
 
     def transform_oof(self, set_i: int, transformer: str) -> pl.DataFrame:
         """(Internal method) Returns ``self.X`` transformed by out-of-fold (if applicable) ``transformer`` for fold set ``set_i``."""
