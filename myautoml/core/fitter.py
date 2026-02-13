@@ -489,7 +489,6 @@ class TabularFitter:
             assert np.issubdtype(test_index.dtype, np.integer)
             oof_preds[test_index] = test_preds
 
-            fold_i += 1
             cat_test_indexes.extend(test_index.tolist())
 
         _fitter_utils._validate_test_indexes(cat_test_indexes, self.n_samples)
