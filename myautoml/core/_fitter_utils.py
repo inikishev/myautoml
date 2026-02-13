@@ -309,7 +309,7 @@ def rename_model(self: "TabularFitter", current_name: str, new_name: str):
 
 
 def rename_transformer(self: "TabularFitter", current_name: str, new_name: str):
-    names = os.listdir(self.root / "models")
+    names = os.listdir(self.root / "transformers")
     if current_name not in names:
         raise RuntimeError(f"Transformer {current_name} doesn't exist")
     if new_name in names:
