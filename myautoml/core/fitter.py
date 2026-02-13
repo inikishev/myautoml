@@ -1,15 +1,15 @@
-import tempfile
-import shutil
 import json
 import logging
-from contextlib import nullcontext
+import math
 import os
 import random
+import shutil
 import string
+import tempfile
 import time
 from collections import defaultdict
 from collections.abc import Callable, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -19,11 +19,11 @@ import numpy as np
 import polars as pl
 from sklearn.model_selection import KFold, StratifiedKFold
 
+from ..metrics import scoring
 from ..polars_transformers.auto_encoder import AutoEncoder, _AutoEncoderWrapper
 from ..utils import numpy_utils, polars_utils, python_utils
 from ..utils.rng import RNG
 from . import fitter_utils
-from ..metrics import scoring
 
 ResponseMethod = Literal["predict", "predict_proba"]
 
@@ -1002,7 +1002,11 @@ class TabularFitter:
             if cache_key in self._temp_transform_cache:
                 self.logger.debug("Loading cached transformed dataframe from %s", self._temp_transform_cache[cache_key])
                 assert self._tmpdir is not None
-                return pl.read_parquet(self._temp_transform_cache[cache_key])
+                try:
+                    return pl.read_parquet(self._temp_transform_cache[cache_key])
+                except Exception as e:
+                    self.logger.warning("Failed to load %s", self._temp_transform_cache[cache_key])
+                    self.logger.warning("%r", e)
 
         fitted_transformer = self._cached_load(transformer_dir / f"transformer-{set_i}-{mapped_fold_i}.joblib", joblib.load)
 
@@ -1028,14 +1032,27 @@ class TabularFitter:
             response_method=config["response_method"],
         )
 
+        start = time.perf_counter()
         transformed = polars_utils.to_dataframe(fitted_transformer.transform(X))
 
         if self._temp_caching_enabled:
-            assert self._tmpdir is not None
-            save_dir = os.path.join(self._tmpdir, f'{cache_key}.parquet')
-            self.logger.debug("Saving cached transformed dataframe to %s", save_dir)
-            transformed.write_parquet(save_dir)
-            self._temp_transform_cache[cache_key] = save_dir
+            sec = time.perf_counter() - start
+            min_sec = fitter_utils.min_fit_sec_for_caching(X) / 500
+            if sec > min_sec:
+                assert self._tmpdir is not None
+                assert cache_key not in self._temp_transform_cache
+                save_dir = os.path.join(self._tmpdir, f'{cache_key}.parquet')
+                try:
+                    self.logger.debug("Saving cached transformed dataframe to %s: %.5f > %.5f", save_dir, sec, min_sec)
+                    transformed.write_parquet(save_dir)
+                    self._temp_transform_cache[cache_key] = save_dir
+                except Exception as e:
+                    self.logger.warning("Failed to save %s", save_dir)
+                    self.logger.warning("%r", e)
+                    self._temp_transform_cache.pop(cache_key, None)
+            else:
+                self.logger.debug(
+                    "Skipped caching dataframe with %i elements: %.5f <= %.5f", math.prod(X.shape), sec, min_sec)
 
         return transformed
 
@@ -1098,6 +1115,7 @@ class TabularFitter:
             response_method=config["response_method"], # this refers to response method of stack models.
         )
 
+        start = time.perf_counter()
         if response_method == "predict_proba":
             if config["supports_proba"]:
                 y = np.asarray(fitted_model.predict_proba(X))
@@ -1109,8 +1127,15 @@ class TabularFitter:
             y = np.asarray(getattr(fitted_model, response_method)(X))
 
         if self._temp_caching_enabled:
-            self.logger.debug("Saving cached predictions under key %r", cache_key)
-            self._temp_predict_cache[cache_key] = y
+            sec = time.perf_counter() - start
+            min_sec = fitter_utils.min_fit_sec_for_caching(y) / 1000
+            if sec > min_sec:
+                assert cache_key not in self._temp_predict_cache
+                self.logger.debug("Storing cached predictions under key %r: %.5f > %.5f", cache_key, sec, min_sec)
+                self._temp_predict_cache[cache_key] = y
+            else:
+                self.logger.debug(
+                    "Skipped caching preds with %i elements: %.5f <= %.5f", math.prod(y.shape), sec, min_sec)
 
         return y
 

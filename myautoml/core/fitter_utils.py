@@ -1,6 +1,7 @@
-import os, json
+import json
 import logging
 import math
+import os
 import string
 from abc import ABC, abstractmethod
 from collections import UserDict, defaultdict
@@ -325,3 +326,5 @@ def rename_transformer(self: "TabularFitter", current_name: str, new_name: str):
                 config["pre_transformer"] = new_name
                 with open(estimator / "config.json", "w", encoding="utf-8") as f: json.dump(config, f)
 
+def min_fit_sec_for_caching(X: np.ndarray | pl.DataFrame):
+    return (math.prod(X.shape) * 100) ** 0.5
