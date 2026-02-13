@@ -27,7 +27,13 @@ _PROBLEM_TYPE_TO_TARGET_ENCODER: dict[ProblemType, Literal['standard', 'minmax',
 
 def _validate_and_log_features(X: pl.DataFrame, logger: logging.Logger):
 
-    invalid_cols = X.drop(pl.selectors.numeric()).drop(pl.selectors.categorical()).drop(pl.selectors.boolean())
+    invalid_cols = (
+        X
+        .drop(pl.selectors.numeric())
+        .drop(pl.selectors.string(include_categorical=True))
+        .drop(pl.selectors.boolean())
+    )
+
     if len(invalid_cols.columns) > 0:
         raise RuntimeError(f"Some columns have unsupported dtypes: {invalid_cols.schema}")
 
@@ -39,6 +45,9 @@ def _validate_and_log_features(X: pl.DataFrame, logger: logging.Logger):
 
     cat_cols = X.select(pl.selectors.categorical())
     logger.info("%i categorical columns: %r", len(cat_cols.columns), cat_cols.columns)
+
+    text_cols = X.select(pl.selectors.string())
+    logger.info("%i text columns: %r", len(text_cols.columns), text_cols.columns)
 
 
 

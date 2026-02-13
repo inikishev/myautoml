@@ -34,7 +34,8 @@ def _infer_problem_type(y: pl.Series) -> "tuple[ProblemType, str]":
         return 'multiclass', f"Target column type is is {y.dtype}"
 
     if y.dtype.is_integer():
-        if y.n_unique() < len(y): return 'multiclass', "Target column is integer and has repeating values"
+        if y.n_unique() < len(y) / 2:
+            return 'multiclass', "Target column is integer and has less than len(y)/2 repeating values."
         return 'regression', "Target column is integer but has no repeating values"
 
     if y.dtype.is_float():
@@ -167,14 +168,6 @@ class AutoEncoder:
         if len(drop_cols) > 0: stages.append(DropCols(*drop_cols))
         if self.binary_to_bool: stages.append(BinaryToBool(exclude=self.label_))
 
-
-        # warn on categorical cols with only unique values
-        for col in X_all.select(pl.selectors.string(include_categorical=True)):
-            if (col.name == self.label_) or (col.name in drop_cols): continue
-            if col.n_unique() == len(col):
-                self.logger.info("Column %s is string/categorical and has no repeating values.", col.name)
-                # drop_cols.append(col.name)
-
         # Drop constant cols
         if self.drop_constant:
             for col in X_all:
@@ -184,8 +177,17 @@ class AutoEncoder:
 
             stages.append(DropConstant(exclude=self.label_))
 
-        # this should be at the end, after text cols has been dropped
-        stages.append(Cast(pl.selectors.string(), pl.Categorical, exclude=self.label_))
+        # Detect text columns
+        self.text_cols_ = []
+        for col in X_all.select(pl.selectors.string(include_categorical=True)):
+            if (col.name == self.label_) or (col.name in drop_cols): continue
+            if col.n_unique() >= len(col) / 2:
+                self.text_cols_.append(col.name)
+
+        # cast string columns as categorical except text
+        exclude = self.text_cols_.copy()
+        if self.label_ is not None: exclude.append(self.label_)
+        stages.append(Cast(pl.selectors.string(), pl.Categorical, exclude=exclude))
 
         self.X_chain_ = Chain(stages)
         self.X_chain_.fit(X_all)
