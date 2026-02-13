@@ -208,7 +208,7 @@ class TabularFitter:
 
         # infer and save scorer
         if eval_metric is None: eval_metric = scoring.DEFAULT_SCORERS[problem_type]
-        scorer = scoring.make_scorer(eval_metric)
+        scorer = scoring.get_scorer(eval_metric)
         joblib.dump(scorer, root / "scorer.joblib", compress=3)
 
         # save fold indexes

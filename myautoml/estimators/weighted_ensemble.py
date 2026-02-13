@@ -16,7 +16,7 @@ from sklearn.utils.validation import (
 )
 from sklearn.utils import check_random_state
 
-from ..metrics.scoring import make_scorer
+from ..metrics.scoring import get_scorer
 from ..utils.polars_utils import to_dataframe, to_series
 
 
@@ -125,7 +125,7 @@ class GreedyWeightedEnsembleRegressor(TransformerMixin, BaseEstimator):
         preds_np = np.stack(list(preds_dict.values()), 0) # (n_models, n_rows, *pred_dims)
         names = np.asarray(list(preds_dict.keys()), dtype=np.str_)
 
-        scorer = make_scorer(self.scoring)
+        scorer = get_scorer(self.scoring)
 
         if self.is_classification:
             init_errors = np.asarray([scorer.error(y, preds=np.argmax(y_hat, -1), proba=y_hat) for y_hat in preds_np])
