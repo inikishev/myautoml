@@ -1000,11 +1000,13 @@ class TabularFitter:
 
         stack_models = config["stack_models"]
         if hasattr(fitted_transformer, "__myautoml_used_models__"):
-            used_models = getattr(fitted_transformer, "__myautoml_used_models__")
+            used_models = getattr(fitted_transformer, "__myautoml_used_models__")()
 
-            self.logger.debug('Overriding stack_models of transformer "%s" with __myautoml_used_models__', transformer)
-            self.logger.debug("Old value: %r", stack_models)
-            self.logger.debug("New value: %r", used_models)
+            if used_models is not None:
+                used_models = [str(m) for m in used_models] # makes sure its not np.str
+                self.logger.debug('Overriding stack_models of transformer "%s" with __myautoml_used_models__', transformer)
+                self.logger.debug("Old value: %r", stack_models)
+                self.logger.debug("New value: %r", used_models)
 
             if used_models is not None: stack_models = used_models
 
@@ -1066,9 +1068,11 @@ class TabularFitter:
         if hasattr(fitted_model, "__myautoml_used_models__"):
             used_models = getattr(fitted_model, "__myautoml_used_models__")()
 
-            self.logger.debug('Overriding stack_models of model "%s" with __myautoml_used_models__', model)
-            self.logger.debug("Old value: %r", stack_models)
-            self.logger.debug("New value: %r", used_models)
+            if used_models is not None:
+                used_models = [str(m) for m in used_models] # makes sure its not np.str
+                self.logger.debug('Overriding stack_models of model "%s" with __myautoml_used_models__', model)
+                self.logger.debug("Old value: %r", stack_models)
+                self.logger.debug("New value: %r", used_models)
 
             if used_models is not None: stack_models = used_models
 
