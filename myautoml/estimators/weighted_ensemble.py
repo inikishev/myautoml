@@ -1,3 +1,4 @@
+import time
 import logging
 import math
 import random
@@ -63,18 +64,21 @@ def _make_int(i: int | float, l: int):
 class GreedyWeightedEnsembleRegressor(TransformerMixin, BaseEstimator):
     """Implements https://www.cs.cornell.edu/~alexn/papers/shotgun.icml04.revised.rev2.pdf
 
+    Meant to be used with ``TabularFitter``.
     This should only be applied to X which contains predictions (ideally out-of-fold) of other models.
     The predictions should be of correct type (predict or predict_proba) for specified scoring.
 
-    X must have format ``f"{model_name}_{output_i}"``, which ``TabularFitter`` follows.
+    X must have format ``f"{model_name}_{output_i}"``.
+
     Args:
         scoring: scoring method
-        n_bags: number of bags. Defaults to 20.
+        n_bags: number of bags. Set this to 1 to mimic autogluon and speed this up significantly. Defaults to 20.
         p: number/fraction of models in each bag. Defaults to 0.5.
         n_init: number/fraction of best-performing models to initialize each bag with. Defaults to 0.1.
         max_iter: maximum number of iterations per bag. Defaults to 1_000_000.
         max_no_improvement: maximum number of hill-climbing without improvement. Defaults to 3.
         subsample: number/fraction of rows to subsample in each bag, can make this much faster. Defaults to 1_000_000.
+        max_sec: each bag will fit for no more than ``max_sec / n_bags``
 
     """
     is_classification = False
@@ -88,6 +92,7 @@ class GreedyWeightedEnsembleRegressor(TransformerMixin, BaseEstimator):
         max_iter: int = 1_000_000,
         max_no_improvement: int = 3,
         subsample: int | float | None = 1_000_000,
+        max_sec: float | None = None,
         random_state=0,
     ):
         self.scoring = scoring
@@ -99,6 +104,7 @@ class GreedyWeightedEnsembleRegressor(TransformerMixin, BaseEstimator):
         self.max_iter = max_iter
         self.max_no_improvement = max_no_improvement
         self.subsample = subsample
+        self.max_sec = max_sec
 
     def fit(self, X, y):
         validate_data(self, X=X, y=y, ensure_all_finite=False)
@@ -106,6 +112,8 @@ class GreedyWeightedEnsembleRegressor(TransformerMixin, BaseEstimator):
 
         if isinstance(y, (pl.Series, pl.DataFrame)):
             y = y.to_numpy()
+        elif hasattr(y, "values"):
+            y = getattr(y, "values")
         else:
             y = np.asarray(y)
 
@@ -163,6 +171,7 @@ class GreedyWeightedEnsembleRegressor(TransformerMixin, BaseEstimator):
             best_weights = bag_weights.copy()
             best_weights_error = float("inf")
             num_no_improvement = 0
+            start_time = time.time()
 
             for iteration in range(self.max_iter):
 
@@ -196,7 +205,11 @@ class GreedyWeightedEnsembleRegressor(TransformerMixin, BaseEstimator):
 
                 else:
                     num_no_improvement += 1
-                    if num_no_improvement >= self.max_no_improvement: break
+                    if num_no_improvement >= self.max_no_improvement:
+                        break
+
+                if (self.max_sec is not None) and (time.time() - start_time >= self.max_sec / self.n_bags):
+                    break
 
             # Update weights
             weights[sub_idx] += best_weights
@@ -224,20 +237,21 @@ class GreedyWeightedEnsembleRegressor(TransformerMixin, BaseEstimator):
 class GreedyWeightedEnsembleClassifier(GreedyWeightedEnsembleRegressor):
     """Implements https://www.cs.cornell.edu/~alexn/papers/shotgun.icml04.revised.rev2.pdf
 
+    Meant to be used with ``TabularFitter``.
     This should only be applied to X which contains predictions (ideally out-of-fold) of other models.
     The predictions should be of correct type (predict or predict_proba) for specified scoring.
 
-    X must have format ``f"{model_name}_{output_i}"``, which ``TabularFitter`` follows.
+    X must have format ``f"{model_name}_{output_i}"``.
 
     Args:
         scoring: scoring method
-        n_bags: number of bags. Defaults to 20.
+        n_bags: number of bags. Set this to 1 to mimic autogluon and speed this up significantly. Defaults to 20.
         p: number/fraction of models in each bag. Defaults to 0.5.
         n_init: number/fraction of best-performing models to initialize each bag with. Defaults to 0.1.
         max_iter: maximum number of iterations per bag. Defaults to 1_000_000.
         max_no_improvement: maximum number of hill-climbing without improvement. Defaults to 3.
         subsample: number/fraction of rows to subsample in each bag, can make this much faster. Defaults to 1_000_000.
-
+        max_sec: each bag will fit for no more than ``max_sec / n_bags``
     """
     is_classification = True
     def __init__(
@@ -249,6 +263,7 @@ class GreedyWeightedEnsembleClassifier(GreedyWeightedEnsembleRegressor):
         max_iter: int = 1_000_000,
         max_no_improvement: int = 3,
         subsample: int | float | None = 1_000_000,
+        max_sec: float | None = None,
         random_state=0,
     ):
         super().__init__(
