@@ -703,10 +703,10 @@ class TabularFitter:
                     y_test = self.y[test_index]
 
                     # fit
-                    fitted_model_dir = model_dir / f"model-{set_i}-{fold_i}.joblib"
-                    if fitted_model_dir.exists():
-                        self.logger.warning("%s already exists, it will be loaded", str(fitted_model_dir))
-                        fitted_model = self._cached_load(fitted_model_dir, joblib.load)
+                    fitted_model_fname = model_dir / f"model-{set_i}-{fold_i}.joblib"
+                    if fitted_model_fname.exists():
+                        self.logger.warning("%s already exists, it will be loaded", str(fitted_model_fname))
+                        fitted_model = self._cached_load(fitted_model_fname, joblib.load)
                     else:
 
                         if use_unlabeled and self.X_unlabeled is not None:
@@ -726,7 +726,7 @@ class TabularFitter:
                         if fitted_model is None: # pyright:ignore[reportUnnecessaryComparison]
                             raise RuntimeError(f"fit_fn for {name} returned None. Make sure model.fit returns self.")
 
-                        joblib.dump(fitted_model, fitted_model_dir, compress=3)
+                        joblib.dump(fitted_model, fitted_model_fname, compress=3)
 
                     obj_qualname = python_utils.get_qualname(fitted_model)
                     obj_repr = repr(fitted_model)[:10_000]
@@ -1058,21 +1058,22 @@ class TabularFitter:
                 assert self._tmpdir is not None
 
                 assert cache_key not in self._temp_transform_cache
-                save_dir = os.path.join(self._tmpdir, f'{cache_key}.parquet')
+                save_fname = os.path.join(self._tmpdir, f'{cache_key}.parquet')
 
                 if python_utils.get_folder_size_bytes(self._tmpdir) / 1e6 < self.max_cache_mb:
                     try:
-                        self.logger.debug("Saving cached transformed dataframe to %s: %.5f > %.5f", save_dir, sec, min_sec)
-                        transformed.write_parquet(save_dir)
-                        self._temp_transform_cache[cache_key] = save_dir
+                        self.logger.debug("Saving cached transformed dataframe to %s: %.5f > %.5f", save_fname, sec, min_sec)
+                        transformed.write_parquet(save_fname)
+                        self._temp_transform_cache[cache_key] = save_fname
 
                     except Exception as e:
-                        self.logger.warning("Failed to save %s", save_dir)
+                        self.logger.warning("Failed to save %s", save_fname)
                         self.logger.warning("%r", e)
+                        if os.path.exists(save_fname): os.remove(save_fname)
                         self._temp_transform_cache.pop(cache_key, None)
 
                 else:
-                    self.logger.debug("Skipped caching dataframe %s: max cache size exceeded", save_dir)
+                    self.logger.debug("Skipped caching dataframe %s: max cache size exceeded", save_fname)
 
             else:
                 self.logger.debug(
