@@ -328,8 +328,8 @@ def rename_transformer(self: "TabularFitter", current_name: str, new_name: str):
 
 def _min_fit_sec_for_caching(X: np.ndarray | pl.DataFrame):
     numel = math.prod(X.shape)
-    if numel > 10 ** 8: return 1e10 # avoid caching more than ~1GB
-    return (math.prod(X.shape) * 100) ** 0.5
+    if numel > 10 ** 8: return 1e10 # return very large value avoid caching more than ~1GB
+    return (math.prod(X.shape) * 100) ** 0.5 # base formula is sqrt(numel * 100), this skips many caches
 
 
 class _SavedPreds(UserDict[int, dict[int, dict[str, str]]]):

@@ -129,7 +129,7 @@ class TabularFitter:
                 # check if myautoml already exists
                 for d in sorted(os.listdir()):
                     if d.startswith("myautoml-"):
-                        if dir is None:
+                        if dir is not None: # another dir starting with myautoml was already assigned
                             raise RuntimeError(
                                 "dir is not specified but are multiple directories starting with 'myautoml-'. "
                                 "Specify `dir` manually.")
@@ -271,7 +271,7 @@ class TabularFitter:
 
     @property
     def n_features(self):
-        return self.X.shape[1] - 1
+        return self.X.shape[1]
 
     @property
     def n_samples(self):
@@ -875,7 +875,7 @@ class TabularFitter:
                                 set_i=set_i,
                                 fold_i=fold_i,
                                 stack_models=stack_models,
-                                transformer=transformer,
+                                transformer=pre_transformer,
                                 passthrough=passthrough,
                                 response_method=response_method
                             )
