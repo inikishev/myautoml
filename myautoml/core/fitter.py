@@ -1140,7 +1140,7 @@ class TabularFitter:
         )
 
 
-    def _predict_numpy(self, X: pl.DataFrame | Any, model: str, response_method: ResponseMethod | Literal['auto'] = 'auto'):
+    def _predict_numpy(self, X: pl.DataFrame | Any, model: str, response_method: ResponseMethod):
         """
         Args:
             X: data to predict labels for.
@@ -1151,10 +1151,6 @@ class TabularFitter:
         """
         self.auto_encoder.validate_data(X)
         X = self.auto_encoder.transform_X(X)
-
-        if response_method == 'auto':
-            if self.is_classification(): response_method = 'predict_proba'
-            else: response_method = 'predict'
 
         if self.is_classification():
             assert response_method != "predict"
