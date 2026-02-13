@@ -1,3 +1,4 @@
+from pathlib import Path
 import json
 import os
 import functools
@@ -213,3 +214,7 @@ def get_qualname(obj):
     module = class_.__module__
     if module == 'builtins': return class_.__qualname__
     return module + '.' + class_.__qualname__
+
+
+def get_folder_size_bytes(folder: str) -> int:
+    return sum(p.stat().st_size for p in Path(folder).rglob('*'))

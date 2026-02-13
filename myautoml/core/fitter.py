@@ -42,16 +42,20 @@ class TabularFitter:
                 this can be slow so should only be used if you run into out of memory.
             - 1: Smart caching - Cache is cleared after every fit and predict (default).
             - 2: Greedy caching - All models and transformers are cached in RAM and are never unloaded.
+        max_cache_mb: maximum size of cache folder in GB.
     """
     problem_type: fitter_utils.ProblemType
     """One of 'binary', 'multiclass', 'multilabel', 'regression', 'multioutput', 'multitask'"""
 
-    max_fname_length = 127
+    per_fold_info = False
+    """if this is true, per-fold validation metrics are logged under INFO verbosity, otherwise DEBUG"""
+
 
     def __init__(
         self,
         verbosity: Literal[0, 1, 2, 3] = 2,
         caching_level: Literal[0, 1, 2] = 1,
+        max_cache_mb: float = 10240,
     ):
         # Logging stuff
         self.logger = logging.getLogger("myautoml.core.fitter.TabularFitter")
@@ -68,6 +72,7 @@ class TabularFitter:
         self.file_handlers = {}
 
         self.caching_level = caching_level
+        self.max_cache_mb = max_cache_mb
 
         self._temp_load_cache: dict[str, Any] = {}
         self._temp_predict_cache: dict[tuple[str, int, int, str], np.ndarray] = {}
@@ -750,7 +755,7 @@ class TabularFitter:
                     if (proba_train is not None) and (proba_test is not None):
                         data[f"test_probas_{set_i}_{fold_i}"] = proba_test
 
-                    self.logger.debug(
+                    (self.logger.info if self.per_fold_info else self.logger.debug)(
                         "Set %i fold %i - %s: train = %.8f, test = %.8f",
                         set_i, fold_i, self.scorer.name, float(score_train), float(score_test))
 
@@ -1038,18 +1043,27 @@ class TabularFitter:
         if self._temp_caching_enabled:
             sec = time.perf_counter() - start
             min_sec = fitter_utils.min_fit_sec_for_caching(X) / 500
+
             if sec > min_sec:
                 assert self._tmpdir is not None
+
                 assert cache_key not in self._temp_transform_cache
                 save_dir = os.path.join(self._tmpdir, f'{cache_key}.parquet')
-                try:
-                    self.logger.debug("Saving cached transformed dataframe to %s: %.5f > %.5f", save_dir, sec, min_sec)
-                    transformed.write_parquet(save_dir)
-                    self._temp_transform_cache[cache_key] = save_dir
-                except Exception as e:
-                    self.logger.warning("Failed to save %s", save_dir)
-                    self.logger.warning("%r", e)
-                    self._temp_transform_cache.pop(cache_key, None)
+
+                if python_utils.get_folder_size_bytes(self._tmpdir) / 1e6 < self.max_cache_mb:
+                    try:
+                        self.logger.debug("Saving cached transformed dataframe to %s: %.5f > %.5f", save_dir, sec, min_sec)
+                        transformed.write_parquet(save_dir)
+                        self._temp_transform_cache[cache_key] = save_dir
+
+                    except Exception as e:
+                        self.logger.warning("Failed to save %s", save_dir)
+                        self.logger.warning("%r", e)
+                        self._temp_transform_cache.pop(cache_key, None)
+
+                else:
+                    self.logger.debug("Skipped caching dataframe %s: max cache size exceeded", save_dir)
+
             else:
                 self.logger.debug(
                     "Skipped caching dataframe with %i elements: %.5f <= %.5f", math.prod(X.shape), sec, min_sec)
@@ -1129,10 +1143,12 @@ class TabularFitter:
         if self._temp_caching_enabled:
             sec = time.perf_counter() - start
             min_sec = fitter_utils.min_fit_sec_for_caching(y) / 1000
+
             if sec > min_sec:
                 assert cache_key not in self._temp_predict_cache
                 self.logger.debug("Storing cached predictions under key %r: %.5f > %.5f", cache_key, sec, min_sec)
                 self._temp_predict_cache[cache_key] = y
+
             else:
                 self.logger.debug(
                     "Skipped caching preds with %i elements: %.5f <= %.5f", math.prod(y.shape), sec, min_sec)

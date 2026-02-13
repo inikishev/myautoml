@@ -327,4 +327,6 @@ def rename_transformer(self: "TabularFitter", current_name: str, new_name: str):
                 with open(estimator / "config.json", "w", encoding="utf-8") as f: json.dump(config, f)
 
 def min_fit_sec_for_caching(X: np.ndarray | pl.DataFrame):
+    numel = math.prod(X.shape)
+    if numel > 10 ** 8: return 1e10 # avoid caching more than ~1GB
     return (math.prod(X.shape) * 100) ** 0.5
