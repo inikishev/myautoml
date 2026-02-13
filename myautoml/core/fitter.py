@@ -42,7 +42,7 @@ class TabularFitter:
                 this can be slow so should only be used if you run into out of memory.
             - 1: Smart caching - Cache is cleared after every fit and predict (default).
             - 2: Greedy caching - All models and transformers are cached in RAM and are never unloaded.
-        max_cache_mb: maximum size of cache folder in GB.
+        max_cache_mb: maximum size of cache folder in MB.
     """
     problem_type: _fitter_utils.ProblemType
     """One of 'binary', 'multiclass', 'multilabel', 'regression', 'multioutput', 'multitask'"""
@@ -69,7 +69,7 @@ class TabularFitter:
         console_handler.setLevel([logging.CRITICAL, logging.WARNING, logging.INFO, logging.DEBUG][verbosity])
         self.logger.addHandler(console_handler)
 
-        self.file_handlers = {}
+        self._logging_file_handler = None
 
         self.caching_level = caching_level
         self.max_cache_mb = max_cache_mb
@@ -153,11 +153,12 @@ class TabularFitter:
 
         root.mkdir(exist_ok=True)
 
+        if self._logging_file_handler is not None: self.logger.removeHandler(self._logging_file_handler)
         file_handler = logging.FileHandler(root / "myautoml.log")
         file_handler.setLevel(logging.DEBUG)
         file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
         self.logger.addHandler(file_handler)
-        self.file_handlers[str(root)] = file_handler
+        self._logging_file_handler = file_handler
 
         # create the dir structure
         (root / "models").mkdir(exist_ok=True)
@@ -226,12 +227,12 @@ class TabularFitter:
         self.root = Path(dir)
 
         # add log file handler
-        if str(self.root) not in self.file_handlers:
-            file_handler = logging.FileHandler(self.root / "myautoml.log")
-            file_handler.setLevel(logging.INFO)
-            file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-            self.logger.addHandler(file_handler)
-            self.file_handlers[str(self.root)] = file_handler
+        if self._logging_file_handler is not None: self.logger.removeHandler(self._logging_file_handler)
+        file_handler = logging.FileHandler(self.root / "myautoml.log")
+        file_handler.setLevel(logging.INFO)
+        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+        self.logger.addHandler(file_handler)
+        self._logging_file_handler = file_handler
 
         # load encoder
         self.auto_encoder: _AutoEncoderWrapper = joblib.load(self.root / "auto_encoder.joblib")
