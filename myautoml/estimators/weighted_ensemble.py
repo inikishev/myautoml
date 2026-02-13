@@ -216,6 +216,7 @@ class GreedyWeightedEnsembleRegressor(TransformerMixin, BaseEstimator):
 
         # Normalize and store weights
         self.weights_ = {model: w for model, w  in zip(names, weights / weights.sum()) if w > 0}
+        return self
 
     def __myautoml_used_models__(self):
         return list(self.weights_.keys())

@@ -698,6 +698,10 @@ class TabularFitter:
                             X_unlabeled_fold = None
 
                         fitted_model = fit_fn(model, X_train, y_train, X_unlabeled_fold)
+
+                        if fitted_model is None: # pyright:ignore[reportUnnecessaryComparison]
+                            raise RuntimeError(f"fit_fn for {name} returned None. Make sure model.fit returns self.")
+
                         joblib.dump(fitted_model, fitted_model_dir, compress=3)
 
                     obj_qualname = python_utils.get_qualname(fitted_model)
