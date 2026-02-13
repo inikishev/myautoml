@@ -275,6 +275,7 @@ class GreedyWeightedEnsembleClassifier(GreedyWeightedEnsembleRegressor):
             max_iter=max_iter,
             max_no_improvement=max_no_improvement,
             subsample=subsample,
+            max_sec=max_sec,
             random_state=random_state,
         )
 

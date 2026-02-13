@@ -1064,7 +1064,7 @@ class TabularFitter:
 
         stack_models = config["stack_models"]
         if hasattr(fitted_model, "__myautoml_used_models__"):
-            used_models = getattr(fitted_model, "__myautoml_used_models__")
+            used_models = getattr(fitted_model, "__myautoml_used_models__")()
 
             self.logger.debug('Overriding stack_models of model "%s" with __myautoml_used_models__', model)
             self.logger.debug("Old value: %r", stack_models)
