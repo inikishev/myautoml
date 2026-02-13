@@ -39,7 +39,7 @@ class TabularFitter:
             - 0: No caching - models and transformers are only loaded to RAM when used and then immediately unloaded,
                 this can be slow so should only be used if you run into out of memory.
             - 1: Smart caching - Cache is cleared after every fit and predict (default).
-            - 2: Greedy caching - Cache is never cleared, so everything is in RAM.
+            - 2: Greedy caching - All models and transformers are cached in RAM and are never unloaded.
     """
     problem_type: fitter_utils.ProblemType
     """One of 'binary', 'multiclass', 'multilabel', 'regression', 'multioutput', 'multitask'"""
@@ -67,7 +67,9 @@ class TabularFitter:
 
         self.caching_level = caching_level
 
-        self._temp_cached: dict[str, Any] = {}
+        self._temp_load_cache: dict[str, Any] = {}
+        self._temp_predict_cache: dict[tuple[str, int, int, str], np.ndarray] = {}
+        self._temp_transform_cache: dict[tuple[str, int, str], pl.DataFrame] = {}
         self._temp_caching_enabled: bool = False
         """Used internally"""
 
@@ -349,27 +351,38 @@ class TabularFitter:
             return loader(path) # caching disabled
 
         path = os.path.normpath(path)
-        if path in self._temp_cached:
-            return self._temp_cached[path]
+        if path in self._temp_load_cache:
+            self.logger.debug("Loading cached %s", path)
+            return self._temp_load_cache[path]
 
         obj = loader(path)
 
         if self._temp_caching_enabled or self.caching_level == 2:
-            self._temp_cached[path] = obj
+            self.logger.debug("Saving %s to cache", path)
+            self._temp_load_cache[path] = obj
 
         return obj
 
     @contextmanager
     def _temp_caching_context(self):
-        assert self._temp_caching_enabled is False
 
-        if self.caching_level != 2: self._temp_cached.clear()
-        self._temp_caching_enabled = True
+        assert self._temp_caching_enabled is False
+        assert len(self._temp_predict_cache) == 0
+        assert len(self._temp_transform_cache) == 0
+        if self.caching_level != 2: assert len(self._temp_load_cache) == 0
+
+        if self.caching_level != 0:
+            self.logger.debug("Enabling temporary caching")
+            self._temp_caching_enabled = True
+
         try:
             yield
 
         finally:
-            if self.caching_level != 2: self._temp_cached.clear()
+            self.logger.debug("Disabling temporary caching")
+            self._temp_predict_cache.clear()
+            self._temp_transform_cache.clear()
+            if self.caching_level != 2: self._temp_load_cache.clear()
             self._temp_caching_enabled = False
 
     def transform_oof(self, set_i: int, transformer: str) -> pl.DataFrame:
@@ -970,24 +983,45 @@ class TabularFitter:
         with open(transformer_dir / "config.json", "r", encoding='utf-8') as f:
             config = json.load(f)
 
+        if config["use_folds"]: mapped_fold_i = str(config["fold_map"][str(fold_i)])
+        else: mapped_fold_i = "ALL"
+
+        cache_key = (transformer, set_i, mapped_fold_i)
+        if self._temp_caching_enabled:
+            if cache_key in self._temp_transform_cache:
+                self.logger.debug("Loading cached transformed dataframe under key %r", cache_key)
+                return self._temp_transform_cache[cache_key]
+
+        fitted_transformer = self._cached_load(transformer_dir / f"transformer-{set_i}-{mapped_fold_i}.joblib", joblib.load)
+
+        stack_models = config["stack_models"]
+        if hasattr(fitted_transformer, "__myautoml_used_models__"):
+            used_models = getattr(fitted_transformer, "__myautoml_used_models__")
+
+            self.logger.debug('Overriding stack_models of transformer "%s" with __myautoml_used_models__', transformer)
+            self.logger.debug("Old value: %r", stack_models)
+            self.logger.debug("New value: %r", used_models)
+
+            if used_models is not None: stack_models = used_models
+
         X = self._get_stacked_X_new(
             X=X,
             transformer=config["pre_transformer"],
             set_i=set_i,
             fold_i=fold_i,
-            stack_models=config["stack_models"],
+            stack_models=stack_models,
             passthrough=config["passthrough"],
             response_method=config["response_method"],
         )
 
-        if config["use_folds"]:
-            fold_i = config["fold_map"][str(fold_i)]
-            fitted_transformer = self._cached_load(transformer_dir / f"transformer-{set_i}-{fold_i}.joblib", joblib.load)
+        transformed = polars_utils.to_dataframe(fitted_transformer.transform(X))
 
-        else:
-            fitted_transformer = self._cached_load((transformer_dir / f"transformer-{set_i}-ALL.joblib"), joblib.load)
+        if self._temp_caching_enabled:
+            self.logger.debug("Saving cached transformed dataframe under key %r", cache_key)
+            self._temp_transform_cache[cache_key] = transformed
+            # TODO may be worth inverstigating saving to disk rather than RAM, if dataframe is huge
 
-        return polars_utils.to_dataframe(fitted_transformer.transform(X))
+        return transformed
 
     def _predict_new(
         self,
@@ -1014,18 +1048,35 @@ class TabularFitter:
         with open(model_dir / "config.json", "r", encoding='utf-8') as f:
             config = json.load(f)
 
+        mapped_fold_i = config["fold_map"][str(fold_i)]
+
+        cache_key = (model, set_i, mapped_fold_i, response_method)
+        if self._temp_caching_enabled:
+            if cache_key in self._temp_predict_cache:
+                self.logger.debug("Loading cached predictions under key %r", cache_key)
+                return self._temp_predict_cache[cache_key]
+
+        fitted_model = self._cached_load(model_dir / f"model-{set_i}-{mapped_fold_i}.joblib", joblib.load)
+
+        stack_models = config["stack_models"]
+        if hasattr(fitted_model, "__myautoml_used_models__"):
+            used_models = getattr(fitted_model, "__myautoml_used_models__")
+
+            self.logger.debug('Overriding stack_models of model "%s" with __myautoml_used_models__', model)
+            self.logger.debug("Old value: %r", stack_models)
+            self.logger.debug("New value: %r", used_models)
+
+            if used_models is not None: stack_models = used_models
+
         X = self._get_stacked_X_new(
             X=X,
             transformer=config["transformer"],
             set_i=set_i,
             fold_i=fold_i,
-            stack_models=config["stack_models"],
+            stack_models=stack_models,
             passthrough=config["passthrough"],
             response_method=config["response_method"], # this refers to response method of stack models.
         )
-
-        fold_i = config["fold_map"][str(fold_i)]
-        fitted_model = self._cached_load(model_dir / f"model-{set_i}-{fold_i}.joblib", joblib.load)
 
         if response_method == "predict_proba":
             if config["supports_proba"]:
@@ -1036,6 +1087,10 @@ class TabularFitter:
 
         else:
             y = np.asarray(getattr(fitted_model, response_method)(X))
+
+        if self._temp_caching_enabled:
+            self.logger.debug("Saving cached predictions under key %r", cache_key)
+            self._temp_predict_cache[cache_key] = y
 
         return y
 
