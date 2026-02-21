@@ -18,9 +18,10 @@ from sklearn.utils import check_random_state
 
 from ..metrics.scoring import get_scorer
 from ..utils.polars_utils import to_dataframe, to_series
+from ..utils.numpy_utils import one_hot
 
 
-def _get_individual_preds(X) -> tuple[dict[str, np.ndarray], int]:
+def _get_individual_preds(X, n_classes:int | None) -> tuple[dict[str, np.ndarray], defaultdict[str, list[int]]]:
     X = to_dataframe(X)
 
     models = set()
@@ -28,35 +29,43 @@ def _get_individual_preds(X) -> tuple[dict[str, np.ndarray], int]:
 
     # get all models
     for col in sorted(set(X.columns)):
-        model, index = col.rsplit("_", 1)
+        if "-" not in col: raise RuntimeError(f"Column {col} has incorrect name, should be f'{{model}}_{{index}}'")
+        model, index = col.rsplit("-", 1)
         models.add(model)
         indexes[model].append(int(index))
 
-    # verify that all models have same number of columns
-    first_ind = None
-    for model,ind in indexes.items():
-        assert len(ind) == len(set(ind))
-        if first_ind is None: first_ind = set(ind)
-        if set(ind) != first_ind:
-            raise RuntimeError(f"Model {model} has indexes {sorted(ind)}, while another model had {sorted(first_ind)}.")
-
     # split into preds
     preds = {}
-    assert first_ind is not None
-    required_cols = sorted(first_ind)
     for model in sorted(models):
-        model_cols = [f"{model}_{col}" for col in required_cols]
-        preds[model] = X.select(model_cols).to_numpy()
+        model_cols = [f"{model}-{col}" for col in indexes[model]]
 
-    return preds, len(first_ind)
+        if n_classes is None:
+            preds[model] = X.select(model_cols).to_numpy()
+
+        else:
+            # TabularFitter will use predict if predict_proba is None
+            arr = X.select(model_cols).to_numpy()
+            assert arr.ndim == 2
+            if arr.shape[1] != n_classes:
+                assert arr.shape[1] == 1, arr.shape
+                arr = arr[:, 0]
+                if n_classes == 2: # TabularFitter only keeps positive probability
+                    arr = np.stack([1-arr, arr], -1)
+                else:
+                    assert np.allclose((arr % 1).sum(), 0)
+                    arr = one_hot(arr.astype(np.uint16), n_classes)
+            preds[model] = arr
+
+    return preds, indexes
 
 def _make_int(i: int | float, l: int):
+    if i == 0: return 0
     if isinstance(i, int):
         assert i >= 1
         return i
 
     if isinstance(i, float):
-        assert 0 < i < 1
+        assert 0 < i <= 1
         return math.ceil(i * l)
 
     raise TypeError(type(i))
@@ -68,13 +77,13 @@ class GreedyWeightedEnsembleRegressor(TransformerMixin, BaseEstimator):
     This should only be applied to X which contains predictions (ideally out-of-fold) of other models.
     The predictions should be of correct type (predict or predict_proba) for specified scoring.
 
-    X must have format ``f"{model_name}_{output_i}"``.
+    X must have format ``f"{model_name}-{output_i}"``.
 
     Args:
         scoring: scoring method
         n_bags: number of bags. Set this to 1 to mimic autogluon and speed this up significantly. Defaults to 20.
         p: number/fraction of models in each bag. Defaults to 0.5.
-        n_init: number/fraction of best-performing models to initialize each bag with. Defaults to 0.1.
+        n_init: number/fraction of best-performing models to initialize each bag with. Defaults to 1.
         max_iter: maximum number of iterations per bag. Defaults to 1_000_000.
         max_no_improvement: maximum number of hill-climbing without improvement. Defaults to 3.
         subsample: number/fraction of rows to subsample in each bag, can make this much faster. Defaults to 1_000_000.
@@ -88,7 +97,7 @@ class GreedyWeightedEnsembleRegressor(TransformerMixin, BaseEstimator):
         scoring,
         n_bags: int = 20,
         p: int | float = 0.5,
-        n_init: int | float | None = 0.1,
+        n_init: int | float | None = 1,
         max_iter: int = 1_000_000,
         max_no_improvement: int = 3,
         subsample: int | float | None = 1_000_000,
@@ -117,13 +126,26 @@ class GreedyWeightedEnsembleRegressor(TransformerMixin, BaseEstimator):
         else:
             y = np.asarray(y)
 
-        preds_dict, self.n_out_ = _get_individual_preds(X)
-        test_pred = next(iter(preds_dict.values()))
-        if self.is_classification:
-            if np.squeeze(test_pred).ndim == 1: raise RuntimeError("X must contain probabilites predicted by each model.")
+        if self.is_classification: self.n_classes_ = len(set(y))
+        else: self.n_classes_ = None
 
-        preds_np = np.stack(list(preds_dict.values()), 0) # (n_models, n_rows, *pred_dims)
+        preds_dict, indexes = _get_individual_preds(X, self.n_classes_)
+        if len(preds_dict) <= 1:
+            raise RuntimeError(f"At least two models are required for greedy weighted ensemble, got {list(preds_dict.keys())}")
+
+        preds_np = np.stack(list(preds_dict.values()), 0) # (n_models, n_rows, 1) or (n_models, n_rows, n_classes)
         names = np.asarray(list(preds_dict.keys()), dtype=np.str_)
+        del preds_dict
+
+
+        if self.is_classification:
+            if preds_np.shape[-1] == 1:
+                # Handle binary classification case, where only positive label probabilities are provided
+                if np.min(preds_np) < 0 or np.max(preds_np) > 1:
+                    raise RuntimeError("test_pred must contain probabilities, but "
+                                       f"{np.min(preds_np) = }, {np.max(preds_np) = }.")
+                preds_np = np.concatenate([1-preds_np, preds_np], -1)
+
 
         scorer = get_scorer(self.scoring)
 
@@ -216,10 +238,10 @@ class GreedyWeightedEnsembleRegressor(TransformerMixin, BaseEstimator):
 
         # Normalize and store weights
         self.weights_ = {model: w for model, w  in zip(names, weights / weights.sum()) if w > 0}
-        self.required_cols_ = set(f"{model}_{i}" for model in self.weights_.keys() for i in range(self.n_out_))
+        self.required_cols_ = set(f"{model}-{i}" for model in self.weights_.keys() for i in indexes[model])
         return self
 
-    def __myautoml_used_models__(self):
+    def __myautoml_used_estimators__(self):
         return list(self.weights_.keys())
 
     def predict(self, X):
@@ -233,9 +255,7 @@ class GreedyWeightedEnsembleRegressor(TransformerMixin, BaseEstimator):
             raise RuntimeError(f"X is missing the following columns: {missing}")
 
 
-        preds, n_out = _get_individual_preds(X)
-        if n_out != self.n_out_:
-            raise RuntimeError(f"X has {n_out} columns per model, while {self.n_out_} were seen during fit")
+        preds, _ = _get_individual_preds(X, self.n_classes_)
 
         ensemble_preds = np.zeros_like(next(iter(preds.values())))
         for k, w in self.weights_.items():
@@ -255,11 +275,14 @@ class GreedyWeightedEnsembleClassifier(GreedyWeightedEnsembleRegressor):
 
     X must have format ``f"{model_name}_{output_i}"``.
 
+    Note: this can be extremely slow if ``n_init`` is over ~25% of total number of models.
+        This may happen with default hyperparameters if you have under 20 models, in that case set it to 0.
+
     Args:
         scoring: scoring method
         n_bags: number of bags. Set this to 1 to mimic autogluon and speed this up significantly. Defaults to 20.
         p: number/fraction of models in each bag. Defaults to 0.5.
-        n_init: number/fraction of best-performing models to initialize each bag with. Defaults to 0.1.
+        n_init: number/fraction of best-performing models to initialize each bag with. Defaults to 5.
         max_iter: maximum number of iterations per bag. Defaults to 1_000_000.
         max_no_improvement: maximum number of hill-climbing without improvement. Defaults to 3.
         subsample: number/fraction of rows to subsample in each bag, can make this much faster. Defaults to 1_000_000.
@@ -271,7 +294,7 @@ class GreedyWeightedEnsembleClassifier(GreedyWeightedEnsembleRegressor):
         scoring,
         n_bags: int = 20,
         p: int | float = 0.5,
-        n_init: int | float | None = 0.1,
+        n_init: int | float | None = 5,
         max_iter: int = 1_000_000,
         max_no_improvement: int = 3,
         subsample: int | float | None = 1_000_000,

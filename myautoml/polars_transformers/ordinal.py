@@ -49,6 +49,7 @@ class OrdinalEncoder(PolarsTransformer):
 
         # Create mappings from values to their ordinal encodings
         for col_name, unique_vals in unique.to_dicts()[0].items():
+            if self.maintain_order: unique_vals = sorted(unique_vals)
 
             if self.propagate_nulls and (None in unique_vals):
                 unique_vals.remove(None) # null won't be mapped to integer

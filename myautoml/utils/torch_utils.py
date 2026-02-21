@@ -1,6 +1,6 @@
 import copy
 from importlib.util import find_spec
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeGuard
 
 import numpy as np
 
@@ -72,3 +72,12 @@ def set_optimizer_lr_(opt: "torch.optim.Optimizer", lr: float):
     for g in opt.param_groups:
         g["lr"] = lr
 
+def is_array_or_tensor(x) -> "TypeGuard[np.ndarray | torch.Tensor]":
+    """returns True if x is numpy array or torch tensor"""
+    if isinstance(x, np.ndarray): return True
+    if TORCH_INSTALLED and hasattr(x, "detach"): return True
+    return False
+
+def to_numpy(x):
+    if hasattr(x, "detach") and hasattr(x, "numpy"): return x.numpy(force=True)
+    return np.asarray(x)

@@ -1,8 +1,10 @@
 import numpy as np
 
-def one_hot(preds: np.ndarray, num_classes: int | None):
-    if num_classes is None: num_classes = int(np.max(preds) + 1)
-    num_samples = preds.shape[0]
-    one_hot = np.zeros((preds.size, num_classes))
-    one_hot[np.arange(num_samples), preds.astype(np.uint64)] = 1
-    return one_hot.reshape((*preds.shape, num_classes))
+def one_hot(preds: np.ndarray, n_classes: int):
+    if not np.issubdtype(preds.dtype, np.integer):
+        raise TypeError(f"Can't one-hot encode array of dtype {preds.dtype}")
+
+    n_samples = preds.shape[0]
+    onehot = np.zeros((preds.size, n_classes))
+    onehot[np.arange(n_samples), preds.astype(np.uint64)] = 1
+    return onehot.reshape((*preds.shape, n_classes))

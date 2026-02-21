@@ -1,24 +1,32 @@
+import inspect
 import json
 import logging
 import math
 import os
+import time
 from collections import UserDict, defaultdict
-from typing import TYPE_CHECKING, Literal
+from collections.abc import Callable, Sequence
+from functools import partial
+from pathlib import Path
+from typing import TYPE_CHECKING, Literal, NamedTuple, Any
 
+import joblib
 import numpy as np
 import polars as pl
 
+from ..utils import polars_utils, python_utils, torch_utils
+
 if TYPE_CHECKING:
-    from .fitter import TabularFitter
+    from .fitter import ProblemType, TabularFitter
 
-ProblemType = Literal["binary", "multiclass","regression", "multilabel", "multioutput", "multitask"]
-# "multilabel", "multioutput", "multitask" are currently not supported but included for future support
-
-_PROBLEM_TYPE_TO_TARGET_ENCODER: dict[ProblemType, Literal['standard', 'minmax', 'ordinal', 'none']] = {
-    "binary": "ordinal",
-    "multiclass": "ordinal",
-    "regression": "minmax",
-}
+def _set_logging_file_handler_(self: "TabularFitter", root: Path):
+    # Only keep file handler for current working directory
+    if self._logging_file_handler is not None: self.logger.removeHandler(self._logging_file_handler)
+    file_handler = logging.FileHandler(root / "myautoml.log")
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    self.logger.addHandler(file_handler)
+    self._logging_file_handler = file_handler
 
 
 def _validate_and_log_features(X: pl.DataFrame, logger: logging.Logger):
@@ -109,7 +117,7 @@ class _FoldSet(UserDict[int, dict[int, tuple[np.ndarray, np.ndarray]]]):
         train_index, test_index = self[0][0]
         return len(train_index) + len(test_index)
     @property
-    def n_models(self): return self.n_fold_sets * self.n_folds
+    def n_estimators(self): return self.n_fold_sets * self.n_folds
 
     def merge_folds(self, n_folds: int | None = None) -> "tuple[_FoldSet, dict[int, int]]":
         """Merge groups of folds to get a new fold set with ``n_folds`` folds."""
@@ -168,7 +176,7 @@ def _validate_test_indexes(cat_test_indexes, n_samples: int):
 
 def _validate_preds(preds: np.ndarray, n_samples: int, n_targets: int):
     msg = (
-        "``model.predict`` should return array of shape (n_samples, n_targets), "
+        "``estimator.predict`` should return array of shape (n_samples, n_targets), "
         f"or (n_samples, ) is allowed if n_targets=1,"
         f"but {n_samples = }, {n_targets = }, and returned array has shape {preds.shape}"
     )
@@ -192,7 +200,7 @@ def _validate_preds(preds: np.ndarray, n_samples: int, n_targets: int):
 
 def _validate_probas(probas: np.ndarray, n_samples: int, n_classes: int):
     msg = (
-        "``model.predict_proba`` should return array of shape (n_samples, n_classes), "
+        "``estimator.predict_proba`` should return array of shape (n_samples, n_classes), "
         f"but {n_samples = }, {n_classes = }, and returned array has shape {probas.shape}"
     )
     if probas.ndim != 2: raise RuntimeError(msg)
@@ -202,176 +210,459 @@ def _validate_probas(probas: np.ndarray, n_samples: int, n_classes: int):
     return probas
 
 
+def _sort_inputs(inputs: list[tuple[str | None, str | None]]) -> list[tuple[str | None, str | None]]:
+    for i in inputs:
+        # json converts tuples to lists which is fine, any sequence works except str
+        assert isinstance(i, str) is False
+        assert len(i) == 2
+        if i[0] is None: assert i[1] is None
 
-def _get_fitted_configs(self: "TabularFitter"):
+    return sorted(
+        set((i1,i2) for i1,i2 in inputs),
+        key = lambda x: tuple("" if i is None else i for i in x),
+    )
 
-    # ------------------------------- model configs ------------------------------ #
-    model_configs = {}
+def _validate_inputs(
+    inputs: str | None | Sequence[str | None] | Sequence[tuple[str | None, str | None]],
+) -> list[tuple[str | None, str | None]]:
 
-    for model_dir in (self.root / "models").iterdir():
-        if "done.txt" not in os.listdir(model_dir): continue
+    if inputs is None: return [(None, None)]
+    if isinstance(inputs, str): return [(inputs, None)]
 
-        with open(model_dir / "config.json", "r", encoding="utf-8") as f:
+    validated: list[tuple[str | None, str | None]] = []
+    for input in inputs:
+        if input is None: validated.append((None, None))
+        elif isinstance(input, str): validated.append((input, None))
+        else:
+            if len(input) != 2: raise RuntimeError(f"{input} should be length-2 tuple")
+            estimator, response_method = input
+            if estimator is None: response_method = None
+            validated.append((estimator, response_method))
+
+    return _sort_inputs(validated)
+
+
+def _min_fit_sec_for_caching(X: np.ndarray | pl.DataFrame, alpha=1000):
+    numel = math.prod(X.shape)
+    if numel > 125_000_000: return 1e100 # return very large value avoid caching more than ~1GB
+
+    # base formula is sqrt(numel * 100) / 1000, this skips many caches that aren't faster
+    value = math.sqrt(numel * 100) / alpha
+    return max(value, 1)
+
+
+class CacheKey(NamedTuple):
+    estimator: str
+    method: str
+    set_i: int
+    fold_i: int | None
+
+class CachedFrame:
+    """Dataframe that may be cached in RAM or on disk.
+
+    Args:
+        cache_file: path to parquet file to cache to.
+        fn: function that computes and returns the dataframe.
+        loaded: loaded DataFrame.
+    """
+    def __init__(
+        self,
+        cache_file: str | os.PathLike,
+        fn: Callable[..., pl.DataFrame],
+        logger: logging.Logger,
+        loaded: pl.DataFrame | None = None,
+    ):
+        self.cache_file = Path(cache_file)
+        self.fn = fn
+        self.loaded = loaded
+        self.logger = logger
+
+    def load(self, max_ram_mb:float, max_disk_mb:float) -> pl.DataFrame:
+        if self.loaded is not None:
+            # we use level 1 for trace
+            self.logger.log(1, "Loading %r dataframe from RAM", self.loaded.shape)
+            return self.loaded
+
+        if self.cache_file.exists():
+            self.logger.log(1, "Loading cached dataframe from %s", str(self.cache_file))
+            with pl.StringCache():
+                return pl.read_parquet(self.cache_file)
+
+        start = time.perf_counter()
+        df = self.fn()
+
+        time_sec = time.perf_counter() - start
+        min_sec = _min_fit_sec_for_caching(df, 1000)
+
+        if time_sec > min_sec:
+
+            # 1 mb ~ 125_000 float64 elements
+            numel = math.prod(df.shape)
+            if numel < max_ram_mb * 125_000:
+                self.logger.log(1, "Saving %r dataframe to RAM, because %.2f > %.2f", df.shape, time_sec, min_sec)
+                self.loaded = df
+
+            elif numel < max_disk_mb * 125_000:
+                self.logger.log(1, "Saving %r dataframe to %s, because %.2f > %.2f",
+                                df.shape, str(self.cache_file), time_sec, min_sec)
+
+                with pl.StringCache():
+                    df.write_parquet(self.cache_file, compression_level=3)
+
+            # else: dataframe is too large and won't be cached
+
+        else:
+            self.logger.log(1, "Not saving %r dataframe, because %.2f <= %.2f", df.shape, time_sec, min_sec)
+
+        return df
+
+class SavedEstimator:
+    """Takes care of processing estimator output for stacking.
+
+    Args:
+        dir: root directory of this estimator.
+        set_i: set index.
+        fold_i: fold index or None for estimator fitted to all folds.
+        is_binary: whether problem_type is "binary".
+        loaded: loaded estimator. Defaults to None.
+    """
+    def __init__(
+        self,
+        dir: str | os.PathLike,
+        set_i: int,
+        fold_i: int | None,
+        problem_type: "ProblemType",
+        logger: logging.Logger,
+        loaded = None,
+    ):
+        self.dir = Path(dir)
+        self.set_i = set_i
+        self.fold_i = fold_i
+        self.problem_type: "ProblemType" = problem_type
+        self.loaded = loaded
+        self.logger = logger
+
+        self.cached_frames: dict[Path, CachedFrame] = {}
+
+    def _total_size_cached_in_ram(self):
+        """returns size (number of elements) cached"""
+        total_size = 0
+        for f in self.cached_frames.values():
+            if f.loaded is not None:
+                total_size += math.prod(f.loaded.shape)
+        return total_size
+
+    def _total_bytes_cached_on_disk(self):
+        total_size = 0
+        for f in self.cached_frames.values():
+            if f.cache_file.exists():
+                total_size += os.path.getsize(f.cache_file)
+        return total_size
+
+
+    @property
+    def file(self): return self.dir / f"estimator-{self.set_i}-{self.fold_i}.joblib"
+    @property
+    def name(self): return self.dir.name
+
+    def get_inputs(self, fitter: "TabularFitter", set_i: int, fold_i: int | None):
+        config = self.get_config()
+        inputs = config["inputs"]
+        if config["used_estimators"] is None: return config["inputs"]
+
+        inputs = [(e, m if m is not None else fitter.get_config(e)["method"]) for e,m in inputs]
+
+        mapped_fold_i = config["fold_map"][str(fold_i)] if config["use_folds"] else None
+        used_estimators = config["used_estimators"][str(set_i)][str(mapped_fold_i)]
+        assert isinstance(used_estimators, list) and isinstance(used_estimators[0], str)
+        new_inputs = [(e, m) for e, m in inputs if f"{e}.{m}" in used_estimators]
+
+        self.logger.debug("Estimator has __myautoml_used_estimators__, some inputs will be skipped.")
+        self.logger.debug("old inputs: %r", inputs)
+        self.logger.debug("new inputs: %r", new_inputs)
+
+        return new_inputs
+
+    def get_config(self):
+        return python_utils.read_json(self.dir / "config.json")
+
+    def get_estimator(self):
+        if self.loaded is None: return joblib.load(self.file)
+        return self.loaded
+
+    def load_test_index(self) -> np.ndarray:
+        return pl.read_parquet(self.dir / "data" / f"test_index-{self.set_i}-{self.fold_i}.parquet").to_series().to_numpy()
+
+    def predict_supervised(self, X) -> np.ndarray:
+        """
+        Passes ``X`` to ``estimator.predict``.
+
+        If problem type is binary, predictions are binarized.
+        """
+        y = np.asarray(self.get_estimator().predict(X))
+
+        if self.problem_type == "binary" and np.issubdtype(y.dtype, np.floating):
+            y = y > 0.5
+
+        return y
+
+    def predict_proba_supervised(self, X) -> np.ndarray:
+        """
+        Passes ``X`` to ``estimator.predict_proba``.
+
+        If problem type is binary and estimator doesn't support ``predict_proba``, it uses ``predict`` instead.
+        """
+        estimator = self.get_estimator()
+        proba = None
+
+        if hasattr(estimator, "predict_proba"):
+            try: proba = np.asarray(estimator.predict_proba(X))
+            except (NotImplementedError, AttributeError): pass
+
+        if proba is None:
+            if self.problem_type == "binary":
+                pos = estimator.predict(X)
+                proba = np.stack([1-pos, pos], -1)
+            else:
+                raise NotImplementedError(f"Estimator '{self.dir.name}' doesn't support predict_proba")
+
+        return proba
+
+    def _call_supervised_method_cached(
+        self,
+        X_fn: Callable[..., pl.DataFrame],
+        cache_file: str | os.PathLike | None,
+        method: str,
+        max_ram_mb: float,
+        max_disk_mb: float,
+    ) -> np.ndarray:
+        """
+        Args:
+            X_fn: function that computes and returns X if needed.
+            cache_file: path to cache file.
+            method: method to call on self.
+            max_ram_mb: won't cache to RAM if dataframe is approximately larger than this.
+            max_disk_mb: won't cache to disk if dataframe is approximately larger than this.
+        """
+        if cache_file is None:
+            return getattr(self, method)(X_fn())
+
+        cache_file = Path(cache_file)
+
+        if cache_file not in self.cached_frames:
+
+            def fn():
+                return pl.from_numpy(getattr(self, method)(X_fn()))
+
+            self.cached_frames[cache_file] = CachedFrame(cache_file=cache_file, fn=fn, logger=self.logger, loaded=self.loaded)
+
+        return self.cached_frames[cache_file].load(max_ram_mb=max_ram_mb, max_disk_mb=max_disk_mb).to_numpy()
+
+    def predict_supervised_cached(
+        self,
+        X_fn: Callable[..., pl.DataFrame],
+        cache_file: str | os.PathLike,
+        max_ram_mb: float,
+        max_disk_mb: float,
+    ) -> np.ndarray:
+        """
+        Args:
+            X_fn: function that computes and returns X if needed.
+            cache_file: path to cache file.
+            method: method to call on self
+            max_ram_mb: won't cache to RAM if dataframe is approximately larger than this.
+            max_disk_mb: won't cache to disk if dataframe is approximately larger than this.
+        """
+        return self._call_supervised_method_cached(
+            X_fn=X_fn,
+            cache_file=cache_file,
+            method="predict_supervised",
+            max_ram_mb=max_ram_mb,
+            max_disk_mb=max_disk_mb,
+        )
+
+    def predict_proba_supervised_cached(
+        self,
+        X_fn: Callable[..., pl.DataFrame],
+        cache_file: str | os.PathLike,
+        max_ram_mb: float,
+        max_disk_mb: float,
+    ) -> np.ndarray:
+        """
+        Args:
+            X_fn: function that computes and returns X if needed.
+            cache_file: path to cache file.
+            method: method to call on self.
+            max_ram_mb: won't cache to RAM if dataframe is approximately larger than this.
+            max_disk_mb: won't cache to disk if dataframe is approximately larger than this.
+        """
+        return self._call_supervised_method_cached(
+            X_fn=X_fn,
+            cache_file=cache_file,
+            method="predict_proba_supervised",
+            max_ram_mb=max_ram_mb,
+            max_disk_mb=max_disk_mb,
+        )
+
+    def get_output_for_stacking(self, X, method: str | None) -> pl.DataFrame:
+        """Passes ``X`` to estimator without any preprocessing and calls ``method``. Outputs are processed for stacking.
+
+        For binary classification only positive label probability is kept.
+
+        For multiclass classification, if ``method="predict"``, outputs are converted to categorical dtype.
+
+        If output is supervised or is a numpy array, columns are named as ``f"{name}.{method}-{col_i}"``
+
+        Args:
+            X: input dataframe
+            method: method to call on estimator
+        """
+        estimator = self.get_estimator()
+        config = self.get_config()
+
+        if method is None:
+            method = config["method"]
+            assert method is not None
+
+        if method == config["method"]:
+            is_categorical = config["is_categorical"]
+        else:
+            if config["is_supervised"] and method == "predict" and self.problem_type == "multiclass":
+                is_categorical = True
+            else:
+                is_categorical = False
+
+        if method == "predict":
+            if config["is_supervised"]: output = self.predict_supervised(X)
+            else: output = estimator.predict(X)
+
+        elif method == "predict_proba":
+            if config["is_supervised"]:
+                output = np.asarray(self.predict_proba_supervised(X))
+                if self.problem_type == "binary":
+                    assert output.shape[-1] == 2, output.shape
+                    # keep only positive label
+                    output = output[..., -1]
+
+            else:
+                output = estimator.predict_proba(X)
+
+        else:
+            output = getattr(estimator, method)(X)
+
+        if torch_utils.is_array_or_tensor(output):
+            if output.ndim == 1: output = output[:, None]
+            schema = [f"{self.name}.{method}-{i}" for i in range(output.shape[1])]
+            output = torch_utils.to_numpy(output)
+            df = pl.from_numpy(output, schema=schema)
+
+        else:
+            df = polars_utils.to_dataframe(output)
+
+        if is_categorical:
+            with pl.StringCache():
+                df = df.cast(pl.String()).cast(pl.Categorical())
+
+        return df
+
+    def get_output_for_stacking_cached(
+        self,
+        X_fn: Callable[..., pl.DataFrame],
+        method: str | None,
+        cache_file: str | os.PathLike | None,
+        max_ram_mb: float,
+        max_disk_mb: float,
+    ) -> pl.DataFrame:
+        """
+        Args:
+            X_fn: function that computes and returns X if needed.
+            cache_file: path to cache file.
+            method: method to call on estimator
+        """
+        if cache_file is None:
+            return self.get_output_for_stacking(X=X_fn(), method=method)
+
+        cache_file = Path(cache_file)
+
+        if cache_file not in self.cached_frames:
+
+            def fn():
+                return self.get_output_for_stacking(X=X_fn(), method=method)
+
+            self.cached_frames[cache_file] = CachedFrame(cache_file=cache_file, fn=fn, logger=self.logger, loaded=self.loaded)
+
+        return self.cached_frames[cache_file].load(max_ram_mb=max_ram_mb, max_disk_mb=max_disk_mb)
+
+
+def _get_fitted_configs(self: "TabularFitter") -> dict[str, dict[str, Any]]:
+
+    configs = {}
+    for estimator_dir in (self.root / "estimators").iterdir():
+        files = os.listdir(estimator_dir)
+        if "done.txt" not in files: continue
+
+        with open(estimator_dir / "config.json", "r", encoding="utf-8") as f:
             config = json.load(f)
 
-        config["name"] = model_dir.name
-        if config["stack_models"] is None: config["stack_models"] = ()
-        model_configs[model_dir.name] = config
+        config["name"] = estimator_dir.name
+        configs[estimator_dir.name] = config
 
-
-    # ---------------------------- transformer configs --------------------------- #
-    transformer_configs = {}
-
-    for transformer_dir in (self.root / "transformers").iterdir():
-        if "done.txt" not in os.listdir(transformer_dir): continue
-
-        with open(transformer_dir / "config.json", "r", encoding="utf-8") as f:
-            config = json.load(f)
-
-        config["name"] = transformer_dir.name
-        if config["stack_models"] is None: config["stack_models"] = ()
-        transformer_configs[transformer_dir.name] = config
-
-    # config = {
-    #     "transformer": transformer,
-    #     "stack_models": stack_models,
-    #     "passthrough": passthrough,
-    #     "response_method": response_method,
-    #     "fold_map": fold_map,
-    #     "supports_proba": supports_proba,
-    #     "n_models": fold_set.n_models,
-    #     "start_time": start_time,
-    #     "fit_sec": fit_sec,
-    #     **scores,
-    #     **{f"{k}_mean": np.mean(v) for k,v in scores},
-    # }
 
     # determine stack level
-    def get_children_(configs_: dict[str, dict], name: str) -> tuple[int, list[str], list[str]]:
-        config = configs_[name]
-        if "stack_level" in config: return config["stack_level"], config["child_models"], config["child_transformers"]
+    def get_children_(name: str) -> tuple[int, list[str]]:
+        config = configs[name]
 
-        stack_level = 1
-        child_models = []
-        child_transformers = []
-        for c_model in config["stack_models"]:
-            c_level, c_models, c_transformers = get_children_(model_configs, c_model)
-            stack_level = max(stack_level, c_level + 1)
-            child_models.extend(c_models)
-            child_transformers.extend(c_transformers)
+        if "stack_level" in config:
+            return config["stack_level"], config["children"]
 
-        transformer = config.get("transformer", config.get("pre_transformer", None))
-        if transformer is not None:
-            c_level, c_models, c_transformers = get_children_(transformer_configs, transformer)
-            stack_level = max(stack_level, c_level)
-            child_models.extend(c_models)
-            child_transformers.extend(c_transformers)
+        stack_level = 0
+        children = []
 
-        def model_key(s):
-            level, _, _ = get_children_(model_configs, s)
-            return level
+        for child, _ in config["inputs"]:
+            if child is None: continue
 
-        def transformer_key(s):
-            level, _, _ = get_children_(transformer_configs, s)
+            c_level, c_children = get_children_(child)
+            children.append(child)
+            children.extend(c_children)
+
+            if config["is_supervised"]: stack_level = max(stack_level, c_level + 1)
+            else: stack_level = max(stack_level, c_level)
+
+        def sort_key(s):
+            level, _ = get_children_(s)
             return level
 
         config["stack_level"] = stack_level
-        config["child_models"] = sorted(set(child_models), key=model_key)
-        config["child_transformers"] = sorted(set(child_transformers), key=transformer_key)
-        config["n_child_models"] = len(config["child_models"])
-        return config["stack_level"], config["child_models"], config["child_transformers"]
+        config["children"] = sorted(set(children), key=sort_key)
+        config["n_children"] = len(config["children"])
+        return config["stack_level"], config["children"]
 
-    for model,config in model_configs.items():
+    for estimator,config in configs.items():
         if "stack_level" not in config:
-            get_children_(model_configs, model)
+            get_children_(estimator)
 
-    for transformer,config in transformer_configs.items():
-        if "stack_level" not in config:
-            get_children_(transformer_configs, transformer)
+    return configs
 
-    return model_configs, transformer_configs
 
-def rename_model(self: "TabularFitter", current_name: str, new_name: str):
-    names = os.listdir(self.root / "models")
+def rename(self: "TabularFitter", current_name: str, new_name: str):
+    names = os.listdir(self.root / "estimators")
     if current_name not in names:
-        raise RuntimeError(f"Model {current_name} doesn't exist")
+        raise RuntimeError(f"Estimator {current_name} doesn't exist")
     if new_name in names:
-        raise FileExistsError(f"Model with name {new_name} already exists.")
+        raise FileExistsError(f"Estimator with name {new_name} already exists.")
 
     # rename dir
-    os.rename(self.root / "models" / current_name, self.root / "models" / new_name)
+    os.rename(self.root / "estimators" / current_name, self.root / "estimators" / new_name)
 
     # rename in all configs
-    dirs = list((self.root / "models").iterdir()) + list((self.root / "transformers").iterdir())
-    for estimator in dirs:
+    for estimator in (self.root / "estimators").iterdir():
         if "config.json" in os.listdir(estimator):
 
-            with open(estimator / "config.json", "r", encoding="utf-8") as f: config = json.load(f)
+            with open(estimator / "config.json", "r", encoding="utf-8") as f:
+                config = json.load(f)
 
-            if config["stack_models"] is not None:
-                config["stack_models"] = [m if m!=current_name else new_name for m in config["stack_models"]]
-                with open(estimator / "config.json", "w", encoding="utf-8") as f: json.dump(config, f)
+            if "inputs" in config:
+                config["inputs"] = [((inp if inp!=current_name else new_name),method) for inp,method in config["inputs"]]
 
-
-def rename_transformer(self: "TabularFitter", current_name: str, new_name: str):
-    names = os.listdir(self.root / "transformers")
-    if current_name not in names:
-        raise RuntimeError(f"Transformer {current_name} doesn't exist")
-    if new_name in names:
-        raise FileExistsError(f"Transformer with name {new_name} already exists.")
-
-
-    # rename dir
-    os.rename(self.root / "transformers" / current_name, self.root / "transformers" / new_name)
-
-    # rename in all configs
-    dirs = list((self.root / "models").iterdir()) + list((self.root / "transformers").iterdir())
-    for estimator in dirs:
-        if "config.json" in os.listdir(estimator):
-            with open(estimator / "config.json", "r", encoding="utf-8") as f: config = json.load(f)
-
-            if "transformer" in config and config["transformer"] == current_name:
-                config["transformer"] = new_name
-                with open(estimator / "config.json", "w", encoding="utf-8") as f: json.dump(config, f)
-
-            if "pre_transformer" in config and config["pre_transformer"] == current_name:
-                config["pre_transformer"] = new_name
-                with open(estimator / "config.json", "w", encoding="utf-8") as f: json.dump(config, f)
-
-def _min_fit_sec_for_caching(X: np.ndarray | pl.DataFrame):
-    numel = math.prod(X.shape)
-    if numel > 10 ** 8: return 1e10 # return very large value avoid caching more than ~1GB
-    return (math.prod(X.shape) * 100) ** 0.5 # base formula is sqrt(numel * 100), this skips many caches
-
-
-class _SavedPreds(UserDict[int, dict[int, dict[str, str]]]):
-    def __init__(self, dir):
-        self.dir = dir
-        self.types: set[str] = set()
-
-        folds = defaultdict(lambda: defaultdict(dict))
-        for filename in os.listdir(dir):
-
-            filepath = os.path.join(dir, filename)
-            type, set_i, fold_i = ".".join(filename.rsplit(".", 1)[:-1]).rsplit("-", 2)
-
-            assert type in ("test_index", "test_preds", "test_proba"), type
-            self.types.add(type)
-
-            set_i = int(set_i)
-            fold_i = int(fold_i)
-
-            folds[set_i][fold_i][type] = filepath
-
-        super().__init__({k: dict(v) for k,v in folds.items()})
-
-    @property
-    def n_fold_sets(self): return len(self)
-    @property
-    def n_folds(self): return len(self[0])
-
-    def load(self, type: Literal["test_index", "test_preds", "test_proba"], set_i: int, fold_i: int) -> np.ndarray:
-        filename = f"{type}-{set_i}-{fold_i}.npz"
-        d = np.load(os.path.join(self.dir, filename))
-        assert len(d.keys()) == 1, list(d.keys())
-        return d["data"]
+                with open(estimator / "config.json", "w", encoding="utf-8") as f:
+                    json.dump(config, f)

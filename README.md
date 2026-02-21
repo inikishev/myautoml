@@ -4,9 +4,12 @@
 
 Library that I use for kaggle competitions. This is kind of like Autogluon but you decide what models you fit, and all models you fit are saved for later usage in ensembling, stacking, etc.
 
-Following Autogluon's strategy (since it seeme to win all AutoML benchmarks), I use synchronized stratified k-folds and all ensembling is done on out-of-fold predictions, and for inference per-fold predictions are averaged. Actually in autogluon ensembling is fitted on averaged predictions, whereas I only average at the very end which I think should work better. But I literally just made this and now I am going to benchmark it and see whether it is better.
+Following Autogluon's strategy (since it seeme to win all AutoML benchmarks), I use synchronized stratified k-folds and all ensembling is done on out-of-fold predictions, and for inference per-fold predictions are averaged. Actually in autogluon ensembling is fitted on averaged predictions, whereas I only average at the very end which I think should work better.
+
+> **note:** While I am developing this, updates may introduce API changes that can break existing folders.
 
 ### How to use
+
 
 #### 1. Initialize
 
@@ -25,132 +28,93 @@ fitter = ma.TabularFitter()
 fitter.initialize(df_train, y="Heart Disease", X_unlabeled=df_test, eval_metric='roc_auc', n_folds=8, drop_cols='id')
 ```
 
-#### 2. Fit L1 models
+#### 2. Fit base models
 
 Fit any model with sklearn-compatible fit and predict methods.
 
 ```python
-fitter.fit_model(
-    name = "LR L1",
-    model = make_pipeline(StandardScaler(), LogisticRegression())
-)
-fitter.fit_model(
-    name = "DT L1",
-    model = make_pipeline(StandardScaler(), DecisionTreeClassifier())
-)
-fitter.fit_model(
-    name = "RF L1",
-    model = make_pipeline(StandardScaler(), RandomForestClassifier()),
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingRegressor
 
-    # merge some folds if model is slow to fit.
-    # since folds are just merged, they are still synchronized
-    # with the unmerged folds.
-    max_folds=4,
+errors = fitter.fit_supervised(
+    name="RF",
+    estimator=RandomForestClassifier(),
 )
-# ... etc
+
+errors = fitter.fit_supervised(
+    name="GB",
+    estimator=GradientBoostingRegressor(),
+)
+
+fitter.list_fitted()
+
+preds = fitter.predict(X_new, estimator="RF")
+proba = fitter.predict_proba(X_new, estimator="RF")
 ```
 
-#### 3. Fit ensembles / stacks
+#### 3. Stacking Models
 
-To reduce leakage as much as possible, all ensemble models are fitted on out-of-fold predictions of underlying models. For inference only the per-fold predictions of the very last model are averaged.
-
-Ensemble can be fitted to just predictions of models of previous stack level, or predictions of all models of all stack levels, or predictions plus original features.
+Models can be fitted to out-of-fold predictions of other models (stacking)
 
 ```python
-l1_models = ["LR L1", "DT L1"]
-# or l1_models = fitter.select_models(stack_level=1)
-
-# fit a weighted ensemble, e.g. using RidgeClassifierCV on predictions
-fitter.fit_model(
-    name = "WeightedEnsemble L2",
-    model = make_pipeline(StandardScaler(), RidgeClassifierCV()),
-    stack_models = l1_models,
-    passthrough = False # only fit on predictions of previous models
+fitter.fit_supervised(
+    name="RF L1",
+    estimator=RandomForestClassifier(),
+    inputs=["RF", "GB"],  # Fit to out-of-fold predictions of RF and FB
 )
 
-# fit stack models with both original features and predictions of L1 models
-fitter.fit_model(
-    name = "LR L2",
-    model = make_pipeline(StandardScaler(), LogisticRegression()),
-    stack_models = l1_models,
+fitter.fit_supervised(
+    name="RF L1-passthrough",
+    estimator=RandomForestClassifier(),
+    # None = original features
+    inputs=[None, "RF", "GB"],  # Fit to original features and out-of-fold predictions
 )
-fitter.fit_model(
-    name = "DT L2",
-    model = make_pipeline(StandardScaler(), DecisionTreeClassifier()),
-    stack_models = l1_models,
-)
-# ... etc
 
-# Fit L3 models
-l2_models = ["LR L2", "DT L2", "WeightedEnsemble L2"]
-fitter.fit_model(
-    name = "WeightedEnsemble L3",
-    model = make_pipeline(StandardScaler(), RidgeClassifierCV()),
-    stack_models = l2_models,
-    passthrough = False
-)
-# ...
 
+# Use helper to select estimators for stacking
+fitter.fit_supervised(
+    name="GB L1",
+    estimator=GradientBoostingRegressor(),
+    inputs=fitter.select_estimators(stack_level=0) # selects ["RF", "GB"]
+)
 ```
 
-#### 4. Fitting transformers
-
-myautoml also supports fitting feature transformers, such as feature selection, PCA, kernel approximations, etc. This is very useful for transformers that are expensive to fit, such as ``SequentialFeatureSelector`` or iterative imputers.
-
-A transformer can be fitted to all data, or to each fold to prevent leakage for transforms that use labels (like LDA and PLSS). Then, when you fit a model, it is fitted to out-of-fold predictions of the transformer.
-
-It is also possible fit a transformer to predictions of other models with or without passthrough, and to outputs of another transformer.
+#### Unsupervised Estimators / Feature Transformers
 
 ```python
-# fit SequentialFeatureSelector
-fitter.fit_transformer(
-    name = "SFF",
-    transformer = make_pipeline(
-        StandardScaler(),
-        SequentialFeatureSelector(LogisticRegression()),
-        scoring="roc_auc",
-    ),
-    use_folds = False,
+from sklearn.decomposition import PCA
+from sklearn.cluster import KMeans
+
+# Fit unsupervised transformer
+fitter.fit_unsupervised(
+    name="KMeans",
+    estimator=KMeans(5),
+    use_folds=True,        # Fit to each fold to avoid data leakage
+    method="predict", # method to call on KMeans
 )
 
-# now we can fit models with this transformer
-fitter.fit_model(
-    name = "SFF-LR L1",
-    model = make_pipeline(StandardScaler(), LogisticRegression()),
-    transformer = "SFF",
+# Fit unsupervised transformer to out-of-fold predictions
+fitter.fit_unsupervised(
+    name="PCA L1",
+    estimator=PCA(n_components=10),
+    use_folds=True,
+    method="transform",
+    inputs=["RF", "GB"],
 )
 
-# transformer can also be fitted to predictions
-# of other models rather than dataset features, or to both
-fitter.fit_transformer(
-    name = "SFF L2",
-    transformer = make_pipeline(
-        StandardScaler(),
-        SequentialFeatureSelector(LogisticRegression()),
-        scoring="roc_auc",
-    )
-    use_folds = False,
-    stack_models = l2_models,
-    passthrough = False,
-)
-
-fitter.fit_model(
-    name = "SFF-LR L3",
-    model = make_pipeline(StandardScaler(), LogisticRegression()),
-    transformer = "SFF L2",
+# Use transformed features in supervised model
+fitter.fit_supervised(
+    name="PCA-L1 RF",
+    estimator=RandomForestClassifier(),
+    inputs=[None, "PCA L1", "KMeans"],  # Original features + PCA + KMeans
 )
 ```
 
-#### 5. Inference
+#### Other useful methods
 
 ```python
-probas = fitter.predict_proba(df_test, model="SFF-LR L3")
-# numpy array of shape (n_samples, n_classes), only for classification
+# View a summary of fitted estimators with their score
+df = fitter.list_fitted(sort="score_test_mean")
 
-preds = fitter.predict(df_test, model="SFF-LR L3")
-# Returns a polars Series.
+# Rename an estimator
+fitter.rename("RF", "RandomForest")
 ```
-
-#### Other stuff
-
-WIP

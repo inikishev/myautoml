@@ -218,7 +218,7 @@ class AutoEncoder:
     def transform(self, X, y=None) -> tuple[pl.DataFrame, pl.Series]:
         X = to_dataframe(self.X_chain_.transform(to_dataframe(X)))
 
-        if y is None or y == self.label_:
+        if y is None or (isinstance(y, str) and y == self.label_):
             if (self.label_ is not None) and (self.label_ in X.columns):
                 y = X[self.label_]
                 X = X.drop(self.label_)

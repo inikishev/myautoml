@@ -39,7 +39,14 @@ def _accuracy(targets: np.ndarray, preds: np.ndarray, proba: np.ndarray | None):
     return float(sklearn.metrics.accuracy_score(targets, preds))
 
 def _mse(targets: np.ndarray, preds: np.ndarray, proba: np.ndarray | None):
+    if proba is not None:
+        return float(sklearn.metrics.mean_squared_error(numpy_utils.one_hot(targets, proba.shape[-1]), proba))
     return float(sklearn.metrics.mean_squared_error(targets, preds))
+
+def _mae(targets: np.ndarray, preds: np.ndarray, proba: np.ndarray | None):
+    if proba is not None:
+        return float(sklearn.metrics.mean_absolute_error(numpy_utils.one_hot(targets, proba.shape[-1]), proba))
+    return float(sklearn.metrics.mean_absolute_error(targets, preds))
 
 def _roc_auc(targets: np.ndarray, preds: np.ndarray, proba: np.ndarray | None):
 
@@ -58,6 +65,7 @@ def _spearmanr(targets: np.ndarray, preds: np.ndarray, proba: np.ndarray | None)
 SCORERS: dict[str, Scorer] = {
     "accuracy": Scorer(name="accuracy", score_func=_accuracy, greater_is_better=True, optimum=1),
     "mse": Scorer(name="MSE", score_func=_mse, greater_is_better=False, optimum=0),
+    "mae": Scorer(name="MAE", score_func=_mae, greater_is_better=False, optimum=0),
     "roc_auc": Scorer(name="ROC AUC", score_func=_roc_auc, greater_is_better=True, optimum=1),
     "spearmanr": Scorer(name="spearmanr", score_func=_spearmanr, greater_is_better=True, optimum=1),
 }

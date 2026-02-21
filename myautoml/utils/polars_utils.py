@@ -12,7 +12,8 @@ from .torch_utils import TORCH_INSTALLED
 PANDAS_INSTALLED = find_spec("pandas") is not None
 
 def to_dataframe(x) -> pl.DataFrame:
-    """Helper function to convert ``polars`` and ``pandas`` ``DataFrame``, ``LazyFrame`` and ``Series`` to ``pl.DataFrame``"""
+    """Helper function to convert ``polars`` and ``pandas`` ``DataFrame``, ``LazyFrame`` and ``Series`` to ``pl.DataFrame``.
+    If x is 1D, assumed to be 1 column."""
 
     # Polars types
     if isinstance(x, pl.DataFrame): return x
@@ -26,17 +27,21 @@ def to_dataframe(x) -> pl.DataFrame:
         if isinstance(x, pd.Series): return pl.from_pandas(x).to_frame()
 
     # Numpy
-    if isinstance(x, np.ndarray): return pl.from_numpy(x)
+    if isinstance(x, np.ndarray): # from_numpy supports 1d arrays natively - converts as 1 column
+        return pl.from_numpy(x)
 
     # Torch
     if TORCH_INSTALLED:
         import torch
-        if isinstance(x, torch.Tensor): return pl.from_torch(x, force=True)
+        if isinstance(x, torch.Tensor):
+            return pl.from_torch(x, force=True)
 
-    return pl.from_numpy(np.asarray(x))
+    x = np.asarray(x)
+    return pl.from_numpy(x)
 
 def to_lazyframe(x) -> pl.LazyFrame:
-    """Helper function to convert ``polars`` and ``pandas`` ``DataFrame``, ``LazyFrame`` and ``Series`` to ``pl.LazyFrame``"""
+    """Helper function to convert ``polars`` and ``pandas`` ``DataFrame``, ``LazyFrame`` and ``Series`` to ``pl.LazyFrame``.
+    If x is 1D, assumed to be 1 column."""
 
     # Polars types
     if isinstance(x, pl.LazyFrame): return x
@@ -51,14 +56,17 @@ def to_lazyframe(x) -> pl.LazyFrame:
 
 
     # Numpy
-    if isinstance(x, np.ndarray): return pl.from_numpy(x).lazy()
+    if isinstance(x, np.ndarray):
+        return pl.from_numpy(x).lazy()
 
     # Torch
     if TORCH_INSTALLED:
         import torch
-        if isinstance(x, torch.Tensor): return pl.from_torch(x, force=True).lazy()
+        if isinstance(x, torch.Tensor):
+            return pl.from_torch(x, force=True).lazy()
 
-    return pl.from_numpy(np.asarray(x)).lazy()
+    x = np.asarray(x)
+    return pl.from_numpy(x).lazy()
 
 
 def to_series(x) -> pl.Series:
