@@ -664,3 +664,7 @@ def semi_supervised_classifier_fit_fn(estimator, X: pl.DataFrame, y: pl.Series, 
     y_full = pl.concat([y.cast(pl.Int64), pl.Series(y.name, y_unlabeled, dtype=pl.Int64)], how='vertical')
 
     return estimator.fit(X_full, y_full)
+
+def unlabeled_fit_fn(estimator, X: pl.DataFrame, y: pl.Series, X_unlabeled: pl.DataFrame | None):
+    assert X_unlabeled is not None
+    return estimator.fit(pl.concat([X, X_unlabeled], how='vertical_relaxed'))
