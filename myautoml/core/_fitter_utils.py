@@ -628,7 +628,7 @@ def _get_fitted_configs(self: "TabularFitter") -> dict[str, dict[str, Any]]:
             children.append(child)
             children.extend(c_children)
 
-            if config["is_supervised"]: stack_level = max(stack_level, c_level + 1)
+            if configs[child]["is_supervised"]: stack_level = max(stack_level, c_level + 1)
             else: stack_level = max(stack_level, c_level)
 
         def sort_key(s):

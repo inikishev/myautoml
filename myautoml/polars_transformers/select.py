@@ -59,6 +59,27 @@ class Cast(PolarsTransformer):
         df = df.with_columns(*cols.collect())
         return df
 
+class CastCategorical(PolarsTransformer):
+    """Cast specified columns to categorical dtype. This first casts to pl.String and then pl.Categorical."""
+    def __init__(
+        self,
+        include: PolarsColumnSelector | None,
+        exclude: PolarsColumnSelector | None = None,
+    ):
+        self.include = include
+        self.exclude = exclude
+
+    def fit(self, df):
+        self.feature_names_in_ = _get_feature_names(df)
+        return self
+
+    @pl.StringCache()
+    def transform(self, df) -> pl.LazyFrame:
+        df = to_lazyframe(df)
+        cols = include_exclude_cols(df, include=self.include, exclude=self.exclude).cast(pl.String).cast(pl.Categorical)
+        df = df.with_columns(*cols.collect())
+        return df
+
 class Collect(PolarsTransformer):
 
     def fit(self, df):

@@ -1,3 +1,4 @@
 from .features import UnsupervisedFeatures
 from .utility import ToCUDA
 from .weighted_ensemble import GreedyWeightedEnsembleClassifier, GreedyWeightedEnsembleRegressor
+from .kernel_approximation import LaplaceRFF

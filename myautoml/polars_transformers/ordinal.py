@@ -82,6 +82,7 @@ class OrdinalEncoder(PolarsTransformer):
     def inverse_transform(self, df) -> pl.LazyFrame:
         return with_columns_nonstrict(to_lazyframe(df), self.inv_exprs_)
 
+
 class MapEncoder(PolarsTransformer):
     """Replaces elements according to a specified mapping, this is useful for ordinal encoding with specific order.
 
@@ -188,3 +189,4 @@ class BinaryToBool(PolarsTransformer):
         df = to_lazyframe(df)
         if self.encoder_ is None: return df
         return self.encoder_.inverse_transform(df)
+

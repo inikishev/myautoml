@@ -9,7 +9,7 @@ from typing import Any
 
 import numpy as np
 import polars as pl
-from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.base import BaseEstimator, ClassifierMixin, RegressorMixin
 from sklearn.utils.validation import (
     check_is_fitted,
     validate_data,  # pyright:ignore[reportAttributeAccessIssue]
@@ -70,35 +70,16 @@ def _make_int(i: int | float, l: int):
 
     raise TypeError(type(i))
 
-class GreedyWeightedEnsembleRegressor(TransformerMixin, BaseEstimator):
-    """Implements https://www.cs.cornell.edu/~alexn/papers/shotgun.icml04.revised.rev2.pdf
-
-    Meant to be used with ``TabularFitter``.
-    This should only be applied to X which contains predictions (ideally out-of-fold) of other models.
-    The predictions should be of correct type (predict or predict_proba) for specified scoring.
-
-    X must have format ``f"{model_name}-{output_i}"``.
-
-    Args:
-        scoring: scoring method
-        n_bags: number of bags. Set this to 1 to mimic autogluon and speed this up significantly. Defaults to 20.
-        p: number/fraction of models in each bag. Defaults to 0.5.
-        n_init: number/fraction of best-performing models to initialize each bag with. Defaults to 1.
-        max_iter: maximum number of iterations per bag. Defaults to 1_000_000.
-        max_no_improvement: maximum number of hill-climbing without improvement. Defaults to 3.
-        subsample: number/fraction of rows to subsample in each bag, can make this much faster. Defaults to 1_000_000.
-        max_sec: each bag will fit for no more than ``max_sec / n_bags``
-
-    """
-    is_classification = False
+class _BaseGreedyWeightedEnsemble(BaseEstimator):
+    is_classification: bool
 
     def __init__(
         self,
         scoring,
         n_bags: int = 20,
         p: int | float = 0.5,
-        n_init: int | float | None = 1,
-        max_iter: int = 1_000_000,
+        n_init: int | float | None = 5,
+        max_iter: int = 1_000,
         max_no_improvement: int = 3,
         subsample: int | float | None = 1_000_000,
         max_sec: float | None = None,
@@ -266,24 +247,27 @@ class GreedyWeightedEnsembleRegressor(TransformerMixin, BaseEstimator):
 
 
 
-class GreedyWeightedEnsembleClassifier(GreedyWeightedEnsembleRegressor):
+class GreedyWeightedEnsembleClassifier(ClassifierMixin, _BaseGreedyWeightedEnsemble):
     """Implements https://www.cs.cornell.edu/~alexn/papers/shotgun.icml04.revised.rev2.pdf
 
     Meant to be used with ``TabularFitter``.
     This should only be applied to X which contains predictions (ideally out-of-fold) of other models.
     The predictions should be of correct type (predict or predict_proba) for specified scoring.
 
-    X must have format ``f"{model_name}_{output_i}"``.
+    X must have format ``f"{model_name}-{output_i}"``.
 
-    Note: this can be extremely slow if ``n_init`` is over ~25% of total number of models.
-        This may happen with default hyperparameters if you have under 20 models, in that case set it to 0.
+    Note: this may go on until ``max_iter`` when total number of models is too low, or n_init is too high,
+        or there is a single model with significantly better scores than all other models. This is because
+        optimal weights are (1, 0, 0, ...); and if it is initialized to more than 1 top model, it will keep
+        picking the best model until max_iter is reached, trying to bring weights closer to optimal.
+        If that happens, set ``n_init`` to 1.
 
     Args:
         scoring: scoring method
         n_bags: number of bags. Set this to 1 to mimic autogluon and speed this up significantly. Defaults to 20.
         p: number/fraction of models in each bag. Defaults to 0.5.
         n_init: number/fraction of best-performing models to initialize each bag with. Defaults to 5.
-        max_iter: maximum number of iterations per bag. Defaults to 1_000_000.
+        max_iter: maximum number of iterations per bag. Defaults to 1_000.
         max_no_improvement: maximum number of hill-climbing without improvement. Defaults to 3.
         subsample: number/fraction of rows to subsample in each bag, can make this much faster. Defaults to 1_000_000.
         max_sec: each bag will fit for no more than ``max_sec / n_bags``
@@ -295,7 +279,7 @@ class GreedyWeightedEnsembleClassifier(GreedyWeightedEnsembleRegressor):
         n_bags: int = 20,
         p: int | float = 0.5,
         n_init: int | float | None = 5,
-        max_iter: int = 1_000_000,
+        max_iter: int = 1_000,
         max_no_improvement: int = 3,
         subsample: int | float | None = 1_000_000,
         max_sec: float | None = None,
@@ -319,3 +303,55 @@ class GreedyWeightedEnsembleClassifier(GreedyWeightedEnsembleRegressor):
     def predict(self, X):
         probas = self.predict_proba(X)
         return probas.argmax(-1)
+
+
+class GreedyWeightedEnsembleRegressor(RegressorMixin, _BaseGreedyWeightedEnsemble):
+    """Implements https://www.cs.cornell.edu/~alexn/papers/shotgun.icml04.revised.rev2.pdf
+
+    Meant to be used with ``TabularFitter``.
+    This should only be applied to X which contains predictions (ideally out-of-fold) of other models.
+    The predictions should be of correct type (predict or predict_proba) for specified scoring.
+
+    X must have format ``f"{model_name}-{output_i}"``.
+
+    Note: this may go on until ``max_iter`` when total number of models is too low, or n_init is too high,
+        or there is a single model with significantly better scores than all other models. This is because
+        optimal weights are (1, 0, 0, ...); and if it is initialized to more than 1 top model, it will keep
+        picking the best model until max_iter is reached, trying to bring weights closer to optimal.
+        If that happens, set ``n_init`` to 1.
+
+    Args:
+        scoring: scoring method
+        n_bags: number of bags. Set this to 1 to mimic autogluon and speed this up significantly. Defaults to 20.
+        p: number/fraction of models in each bag. Defaults to 0.5.
+        n_init: number/fraction of best-performing models to initialize each bag with. Defaults to 5.
+        max_iter: maximum number of iterations per bag. Defaults to 1_000.
+        max_no_improvement: maximum number of hill-climbing without improvement. Defaults to 3.
+        subsample: number/fraction of rows to subsample in each bag, can make this much faster. Defaults to 1_000_000.
+        max_sec: each bag will fit for no more than ``max_sec / n_bags``
+    """
+    is_classification = False
+
+    def __init__(
+        self,
+        scoring,
+        n_bags: int = 20,
+        p: int | float = 0.5,
+        n_init: int | float | None = 5,
+        max_iter: int = 1_000,
+        max_no_improvement: int = 3,
+        subsample: int | float | None = 1_000_000,
+        max_sec: float | None = None,
+        random_state=0,
+    ):
+        super().__init__(
+            scoring=scoring,
+            n_bags=n_bags,
+            p=p,
+            n_init=n_init,
+            max_iter=max_iter,
+            max_no_improvement=max_no_improvement,
+            subsample=subsample,
+            max_sec=max_sec,
+            random_state=random_state,
+        )

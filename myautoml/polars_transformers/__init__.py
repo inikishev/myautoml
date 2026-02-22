@@ -4,6 +4,7 @@ from .infrequent import MergeInfrequent
 from .one_hot import OneHotEncoder
 from .ordinal import OrdinalEncoder, MapEncoder, BinaryToBool
 from .scale import MinMaxScaler, SampleNormalizer, StandardScaler
-from .select import DropCols, DropConstant, RemoveDuplicates, SelectCols, Cast, Collect
+from .select import DropCols, DropConstant, RemoveDuplicates, SelectCols, Cast, Collect, CastCategorical
 from .tonumpy import ToNumpy
 from .auto_encoder import AutoEncoder
+from .topandas import ToPandas
