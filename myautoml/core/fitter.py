@@ -784,9 +784,11 @@ class TabularFitter:
                             f"Estimator {name} received a frame of shape {X_oof.shape}, and returned shape {output.shape}")
 
                     if is_categorical is None:
-                        if all(dtype.is_integer() for dtype in output.dtypes): is_categorical = True
-                        else: is_categorical = False
-
+                        is_categorical = (
+                            output.width == 1 and
+                            output.dtypes[0].is_integer() and
+                            output[output.columns[0]].n_unique() > 2
+                        )
                     is_tested = True
 
 
@@ -1100,7 +1102,7 @@ class TabularFitter:
         configs = _fitter_utils._get_fitted_configs(self)
         if len(configs) == 0: return pl.DataFrame()
 
-        df = pl.from_dicts(list(configs.values()))
+        df = pl.from_dicts(list(configs.values()), infer_schema_length=None)
 
         if supervised is False:
             df = df.filter(pl.col("is_supervised").not_())

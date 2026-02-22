@@ -376,6 +376,9 @@ class SavedEstimator:
         used_estimators = config["used_estimators"][str(set_i)][str(mapped_fold_i)]
         assert isinstance(used_estimators, list) and isinstance(used_estimators[0], str)
         new_inputs = [(e, m) for e, m in inputs if f"{e}.{m}" in used_estimators]
+        missing = set(used_estimators).difference(f'{e}.{m}' for e,m in new_inputs)
+        if len(missing) > 0:
+            raise RuntimeError(f"Those columns are missing: {missing}. Available columns: {inputs}")
 
         self.logger.debug("Estimator has __myautoml_used_estimators__, some inputs will be skipped.")
         self.logger.debug("old inputs: %r", inputs)
@@ -560,7 +563,12 @@ class SavedEstimator:
             df = polars_utils.to_dataframe(output)
 
         if is_categorical is None:
-            is_categorical = all(d.is_integer() for d in df.dtypes)
+            is_categorical = (
+                            df.width == 1 and
+                            df.dtypes[0].is_integer() and
+                            df[df.columns[0]].n_unique() > 2
+                        )
+            self.logger.log(1, "is_categorical for method %s inferred as %s", method, is_categorical)
 
         if is_categorical:
             with pl.StringCache():
@@ -664,8 +672,24 @@ def rename(self: "TabularFitter", current_name: str, new_name: str):
             with open(estimator / "config.json", "r", encoding="utf-8") as f:
                 config = json.load(f)
 
+            if "name" in config:
+                if config["name"] == current_name: config["name"] = new_name
+
             if "inputs" in config:
                 config["inputs"] = [((inp if inp!=current_name else new_name),method) for inp,method in config["inputs"]]
+
+            def _rename_estimator(est: str):
+                assert isinstance(est, str)
+                name, method = est.rsplit(".", 1)
+                if name == current_name: name = new_name
+                return f"{name}.{method}"
+
+            if "used_estimators" in config:
+                used_estimators = config["used_estimators"]
+                if used_estimators is not None:
+                    for set_i, folds in used_estimators.items():
+                        for fold_i, estimators in folds.items():
+                            folds[fold_i] = [_rename_estimator(e) for e in estimators]
 
                 with open(estimator / "config.json", "w", encoding="utf-8") as f:
                     json.dump(config, f)

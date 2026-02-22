@@ -39,5 +39,5 @@ class LaplaceRFF(TransformerMixin, BaseEstimator):
         check_is_fitted(self)
         X = validate_data(self, X=X, reset=False)
         X = X.astype(self.dtype)
-        projection = np.dot(X, self.W_) + self.b_
+        projection = X @ self.W_ + self.b_
         return np.cos(projection).astype(self.dtype) * np.sqrt(2.0 / self.n_components)

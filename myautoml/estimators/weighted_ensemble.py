@@ -264,7 +264,7 @@ class GreedyWeightedEnsembleClassifier(ClassifierMixin, _BaseGreedyWeightedEnsem
 
     Args:
         scoring: scoring method
-        n_bags: number of bags. Set this to 1 to mimic autogluon and speed this up significantly. Defaults to 20.
+        n_bags: number of bags. Defaults to 20.
         p: number/fraction of models in each bag. Defaults to 0.5.
         n_init: number/fraction of best-performing models to initialize each bag with. Defaults to 5.
         max_iter: maximum number of iterations per bag. Defaults to 1_000.
@@ -322,7 +322,7 @@ class GreedyWeightedEnsembleRegressor(RegressorMixin, _BaseGreedyWeightedEnsembl
 
     Args:
         scoring: scoring method
-        n_bags: number of bags. Set this to 1 to mimic autogluon and speed this up significantly. Defaults to 20.
+        n_bags: number of bags. Defaults to 20.
         p: number/fraction of models in each bag. Defaults to 0.5.
         n_init: number/fraction of best-performing models to initialize each bag with. Defaults to 5.
         max_iter: maximum number of iterations per bag. Defaults to 1_000.
