@@ -1,5 +1,5 @@
 import time
-import logging
+import logging, warnings
 import math
 import random
 from collections import defaultdict
@@ -84,6 +84,7 @@ class _BaseGreedyWeightedEnsemble(BaseEstimator):
         subsample: int | float | None = 1_000_000,
         max_sec: float | None = None,
         random_state=0,
+        verbose: int = 0
     ):
         self.scoring = scoring
         self.n_bags = n_bags
@@ -95,6 +96,7 @@ class _BaseGreedyWeightedEnsemble(BaseEstimator):
         self.max_no_improvement = max_no_improvement
         self.subsample = subsample
         self.max_sec = max_sec
+        self.verbose = verbose
 
     def fit(self, X, y):
         validate_data(self, X=X, y=y, ensure_all_finite=False)
@@ -138,7 +140,7 @@ class _BaseGreedyWeightedEnsemble(BaseEstimator):
 
         weights = np.zeros(len(names), dtype=int)
 
-        for i_bag in range(self.n_bags):
+        for bag_i in range(self.n_bags):
 
             # Subsample rows
             y_rows = y
@@ -195,6 +197,9 @@ class _BaseGreedyWeightedEnsemble(BaseEstimator):
                         lowest_error = trial_error
                         lowest_error_index = i
 
+                    if self.verbose >= 2:
+                        print(f"{i} {names[sub_idx[i]]}: {trial_error=:5f}, {lowest_error=:5f}")
+
                 # Update bag with new model
                 assert lowest_error_index is not None
                 bag_sum += sub_preds[lowest_error_index]
@@ -213,6 +218,14 @@ class _BaseGreedyWeightedEnsemble(BaseEstimator):
 
                 if (self.max_sec is not None) and (time.time() - start_time >= self.max_sec / self.n_bags):
                     break
+
+                if self.verbose >= 1:
+                    print(f"{bag_i}-{iteration}/{self.max_iter}: {best_weights_error=:.5f}, "
+                          f"{lowest_error=:.5f}, {n_models=}, no_improvement="
+                          f"{num_no_improvement}/{self.max_no_improvement}")
+
+                if iteration == self.max_iter - 1:
+                    warnings.warn(f"{self.__class__.__name__} terminated early, reached {self.max_iter} iterations")
 
             # Update weights
             weights[sub_idx] += best_weights
@@ -284,6 +297,7 @@ class GreedyWeightedEnsembleClassifier(ClassifierMixin, _BaseGreedyWeightedEnsem
         subsample: int | float | None = 1_000_000,
         max_sec: float | None = None,
         random_state=0,
+        verbose: int = 0
     ):
         kwargs = locals().copy()
         del kwargs["self"], kwargs["__class__"]
@@ -335,6 +349,7 @@ class GreedyWeightedEnsembleRegressor(RegressorMixin, _BaseGreedyWeightedEnsembl
         subsample: int | float | None = 1_000_000,
         max_sec: float | None = None,
         random_state=0,
+        verbose: int = 0
     ):
         kwargs = locals().copy()
         del kwargs["self"], kwargs["__class__"]
