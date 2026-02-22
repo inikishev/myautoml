@@ -225,7 +225,7 @@ class _BaseGreedyWeightedEnsemble(BaseEstimator):
     def __myautoml_used_estimators__(self):
         return list(self.weights_.keys())
 
-    def predict(self, X):
+    def _predict_raw(self, X):
         check_is_fitted(self)
 
         # can't use validate_data(self, X=X, reset=False, ensure_all_finite=False)
@@ -285,20 +285,12 @@ class GreedyWeightedEnsembleClassifier(ClassifierMixin, _BaseGreedyWeightedEnsem
         max_sec: float | None = None,
         random_state=0,
     ):
-        super().__init__(
-            scoring=scoring,
-            n_bags=n_bags,
-            p=p,
-            n_init=n_init,
-            max_iter=max_iter,
-            max_no_improvement=max_no_improvement,
-            subsample=subsample,
-            max_sec=max_sec,
-            random_state=random_state,
-        )
+        kwargs = locals().copy()
+        del kwargs["self"], kwargs["__class__"]
+        super().__init__(**kwargs)
 
     def predict_proba(self, X):
-        return super().predict(X)
+        return self._predict_raw(X)
 
     def predict(self, X):
         probas = self.predict_proba(X)
@@ -344,14 +336,9 @@ class GreedyWeightedEnsembleRegressor(RegressorMixin, _BaseGreedyWeightedEnsembl
         max_sec: float | None = None,
         random_state=0,
     ):
-        super().__init__(
-            scoring=scoring,
-            n_bags=n_bags,
-            p=p,
-            n_init=n_init,
-            max_iter=max_iter,
-            max_no_improvement=max_no_improvement,
-            subsample=subsample,
-            max_sec=max_sec,
-            random_state=random_state,
-        )
+        kwargs = locals().copy()
+        del kwargs["self"], kwargs["__class__"]
+        super().__init__(**kwargs)
+
+    def predict(self, X):
+        return self._predict_raw(X)

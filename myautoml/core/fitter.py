@@ -1152,10 +1152,6 @@ class TabularFitter:
 
         return estimators["name"].to_list()
 
-    def rename(self, current_name: str, new_name: str) -> None:
-        """Rename an estimator from ``current_name`` to ``new_name``."""
-        _fitter_utils.rename(self, current_name, new_name)
-
     def preview_stacked(
         self,
         inputs: str | None | Sequence[str | None] | Sequence[tuple[str | None, str | None]],
