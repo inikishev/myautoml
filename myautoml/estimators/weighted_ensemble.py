@@ -198,7 +198,7 @@ class _BaseGreedyWeightedEnsemble(BaseEstimator):
                         lowest_error_index = i
 
                     if self.verbose >= 2:
-                        print(f"{i} {names[sub_idx[i]]}: {trial_error=:5f}, {lowest_error=:5f}")
+                        print(f"{i} {names[sub_idx[i]]}: {trial_error=:8f}, {lowest_error=:8f}")
 
                 # Update bag with new model
                 assert lowest_error_index is not None
@@ -220,8 +220,8 @@ class _BaseGreedyWeightedEnsemble(BaseEstimator):
                     break
 
                 if self.verbose >= 1:
-                    print(f"{bag_i}-{iteration}/{self.max_iter}: {best_weights_error=:.5f}, "
-                          f"{lowest_error=:.5f}, {n_models=}, no_improvement="
+                    print(f"{bag_i}-{iteration}/{self.max_iter}: {best_weights_error=:.8f}, "
+                          f"{lowest_error=:.8f}, {n_models=}, no_improvement="
                           f"{num_no_improvement}/{self.max_no_improvement}")
 
                 if iteration == self.max_iter - 1:
