@@ -351,7 +351,7 @@ def test_map_encoder_allow_unknown():
     })
 
     # allow_unknown=True maps missing keys to None
-    encoder = MapEncoder(map={"a": {"x": 1}}, allow_unknown=True)
+    encoder = MapEncoder(map={"a": {"x": 1}}, unknown_strategy='null')
     encoded_df = encoder.fit_transform(df).collect()
 
     expected = pl.DataFrame({

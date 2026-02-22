@@ -653,3 +653,14 @@ def _get_fitted_configs(self: "TabularFitter") -> dict[str, dict[str, Any]]:
             get_children_(estimator)
 
     return configs
+
+def semi_supervised_classifier_fit_fn(estimator, X: pl.DataFrame, y: pl.Series, X_unlabeled: pl.DataFrame | None):
+    assert X_unlabeled is not None
+    assert y.dtype.is_integer(), y.dtype
+
+    X_full = pl.concat([X, X_unlabeled], how='vertical_relaxed')
+
+    y_unlabeled = np.full((X_unlabeled.height), fill_value=-1)
+    y_full = pl.concat([y.cast(pl.Int64), pl.Series(y.name, y_unlabeled, dtype=pl.Int64)], how='vertical')
+
+    return estimator.fit(X_full, y_full)
