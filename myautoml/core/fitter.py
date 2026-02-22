@@ -576,7 +576,7 @@ class TabularFitter:
                 ``predict`` / ``predict_proba`` are always used for scoring. If None, it is set to
                 to ``"predict_proba"`` or ``"predict"`` based on what the estimator supports.
             is_categorical: whether output of ``estimator.method`` should be converted to categorical,
-                may be inferred and ignored in some cases. If not specified, inferred from problem type or output dtype.
+                may be inferred and ignored in some cases. If not specified, inferred from problem type or output dtype. If ``estimator`` already outputs a dataframe with categorical dtypes, this can be set tp False.
             use_folds: whether to use folds or fit this estimator to all data, only for unsupervised estimators.
             is_supervised: whether this estimator is supervised and should be scored.
             inputs: list of tuples ``(estimator, method)``, ``(None, None)`` means original features.
@@ -925,10 +925,8 @@ class TabularFitter:
             method: default method on the estimator used to get the outputs. Note that if estimator is supervised,
                 ``predict`` / ``predict_proba`` are always used for scoring. If None, it is set to
                 to ``"predict_proba"`` or ``"predict"`` based on what the estimator supports. Defaults to None.
-            is_categorical: whether output of ``estimator.method`` is categorical.
-                If method is ``predict`` and problem type is classification, it is always True ignoring this value,
-                ``predict_proba`` and ``predict`` on regression are always False.
-                Otherwise you have to set this to True or False.
+            is_categorical: whether output of ``estimator.method`` should be converted to categorical,
+                may be inferred and ignored in some cases. If not specified, inferred from problem type or output dtype. If ``estimator`` already outputs a dataframe with categorical dtypes, this can be set tp False.
             inputs: inputs to fit the estimator to, ``None`` means original features.
                 Can be a sequence of strings and None, or sequence of tuples ``(estimator, method)``,
                 where original features are written as ``(None, None)``.
@@ -980,7 +978,7 @@ class TabularFitter:
                 set this to True to avoid label leakage.
             method: default method on the estimator used to get the outputs, e.g. ``"transform"``
             is_categorical: whether output of ``estimator.method`` should be converted to categorical,
-                if None, if output is integer, it is assumed to be categorical.
+                may be inferred and ignored in some cases. If not specified, inferred from problem type or output dtype. If ``estimator`` already outputs a dataframe with categorical dtypes, this can be set tp False.
             inputs: inputs to fit the estimator to, ``None`` means original features.
                 Can be a sequence of strings and None, or sequence of tuples ``(estimator, method)``,
                 where original features are written as ``(None, None)``.

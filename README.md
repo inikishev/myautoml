@@ -76,6 +76,14 @@ fitter.fit_supervised(
     estimator=GradientBoostingRegressor(),
     inputs=fitter.select_estimators(stack_level=0) # selects ["RF", "GB"]
 )
+
+# Fit second stacking level
+fitter.fit_supervised(
+    name="GB L2",
+    estimator=GradientBoostingRegressor(),
+    # selects ["RF", "GB", "RF L1", "RF L1-passthrough"]
+    inputs=[None, *fitter.select_estimators(max_stack_level=1)]
+)
 ```
 
 #### Unsupervised Estimators / Feature Transformers

@@ -530,7 +530,7 @@ class SavedEstimator:
             if config["is_supervised"] and method == "predict" and self.problem_type == "multiclass":
                 is_categorical = True
             else:
-                is_categorical = False
+                is_categorical = None # will be inferred later
 
         if method == "predict":
             if config["is_supervised"]: output = self.predict_supervised(X)
@@ -558,6 +558,9 @@ class SavedEstimator:
 
         else:
             df = polars_utils.to_dataframe(output)
+
+        if is_categorical is None:
+            is_categorical = all(d.is_integer() for d in df.dtypes)
 
         if is_categorical:
             with pl.StringCache():
