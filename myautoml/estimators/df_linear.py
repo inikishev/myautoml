@@ -65,7 +65,7 @@ class _BaseDFLinear(BaseEstimator):
             n_targets = y.shape[1]
 
         assert torch is not None
-        X = torch.tensor(X, device=self.device, dtype=self.dtype)
+        X = torch.as_tensor(X, device=self.device, dtype=self.dtype)
 
         # might make sklearnex issue later
         # -
@@ -120,7 +120,7 @@ class _BaseDFLinear(BaseEstimator):
             # -
 
             assert torch is not None
-            x_torch = torch.tensor(x, device=self.device, dtype=self.dtype)
+            x_torch = torch.as_tensor(x, device=self.device, dtype=self.dtype)
             W = x_torch[:(n_features * n_targets)].view(n_features, n_targets)
             b = x_torch[(n_features * n_targets):].view(n_targets)
 
@@ -149,17 +149,17 @@ class _BaseDFLinear(BaseEstimator):
             return error
 
         import scipy.optimize
-        W_init = torch.tensor(rng.standard_normal((n_features, n_targets)), device=self.device, dtype=self.dtype) * 0.5
+        W_init = torch.as_tensor(rng.standard_normal((n_features, n_targets)), device=self.device, dtype=self.dtype) * 0.5
         b_init = torch.zeros(n_targets, device=self.device, dtype=self.dtype)
         params = torch.cat([W_init.ravel(), b_init.ravel()]).numpy(force=True)
         del W_init, b_init
 
         methods = self.methods
         if methods is None:
-            if params.size <= 8: methods = ["bfgs", "cobyqa", "cobyla", "powell", "nelder-mead"]
-            elif params.size <= 16: methods = ["cobyqa", "cobyla", "powell", "nelder-mead"]
-            elif params.size <= 64: methods = ["cobyqa", "cobyla", "powell"]
-            elif params.size <= 256: methods = ["cobyla", "powell"]
+            if params.size < 8: methods = ["bfgs", "cobyqa", "cobyla", "powell", "nelder-mead"]
+            elif params.size < 16: methods = ["cobyqa", "cobyla", "powell", "nelder-mead"]
+            elif params.size < 64: methods = ["cobyqa", "cobyla", "powell"]
+            elif params.size < 256: methods = ["cobyla", "powell"]
             else: methods = ["powell"]
 
         self.eval_count_ = 0
@@ -200,8 +200,10 @@ class _BaseDFLinear(BaseEstimator):
     def decision_function(self, X):
         check_is_fitted(self)
         X = validate_data(self, X=X, reset=False)
-        X = X.astype(self.W_.dtype)
-        return (X @ self.W_ + self.b_)
+        X = torch.as_tensor(X, device=self.device, dtype=self.dtype)
+        W = torch.as_tensor(self.W_, device=self.device, dtype=self.dtype)
+        b = torch.as_tensor(self.b_, device=self.device, dtype=self.dtype)
+        return X @ W + b
 
 
 
@@ -255,6 +257,7 @@ class DFLinearClassifier(ClassifierMixin, _BaseDFLinear):
     def predict_proba(self, X):
         proba = self.decision_function(X)
         if self.activation_ is not None: proba = self.activation_(proba)
+        proba = proba.numpy(force=True)
         if proba.shape[-1] == 1:
             proba = np.squeeze(proba, -1)
             proba = np.stack([1-proba, proba], -1)
@@ -315,5 +318,6 @@ class DFLinearRegressor(RegressorMixin, _BaseDFLinear):
     def predict(self, X):
         y = self.decision_function(X)
         if self.activation_ is not None: y = self.activation_(y)
+        y = y.numpy(force=True)
         if y.shape[-1] == 1: y = np.squeeze(y, -1)
         return y
