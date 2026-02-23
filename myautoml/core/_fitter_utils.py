@@ -661,7 +661,7 @@ def default_fit_fn(estimator, X: pl.DataFrame, y: pl.Series,
                            "Specify a custom fit_fn, or use `myautoml.unlabeled_fit_fn` or "
                            "`myautoml.semi_supervised_classifier_fit_fn`")
 
-    if sample_weight is None: return estimator.fit(X, y, sample_weight=sample_weight)
+    if sample_weight is not None: return estimator.fit(X, y, sample_weight=sample_weight)
     return estimator.fit(X, y)
 
 
