@@ -116,36 +116,53 @@ class MinMaxScaler(PolarsTransformer):
         self.min_ = df.fill_nan(None).min().collect().to_dicts()[0]
         self.max_ = df.fill_nan(None).max().collect().to_dicts()[0]
 
-        self.expr_ = {}
-        self.inv_expr_ = {}
+        return self
+
+    def _get_exprs(self):
+        exprs = {}
+
+        for col, vmin in self.min_.items():
+
+            vmax = self.max_[col]
+            denom = max(vmax - vmin, 1e-16)
+
+            expr = pl.col(col).sub(vmin).truediv(denom)
+
+            if self.feature_range != (0, 1):
+                lb, ub = self.feature_range
+                expr = expr.mul(ub - lb).add(lb)
+
+            if self.clip:
+                expr = expr.clip(*self.feature_range)
+
+            exprs[col] = expr
+
+        return exprs
+
+    def _get_inv_exprs(self):
+        inv_exprs = {}
 
         for col, vmin in self.min_.items():
             vmax = self.max_[col]
             denom = max(vmax - vmin, 1e-16)
 
-            expr = pl.col(col).sub(vmin).truediv(denom)
             inv_expr = pl.col(col)
 
             if self.feature_range != (0, 1):
                 lb, ub = self.feature_range
-                expr = expr.mul(ub - lb).add(lb)
                 inv_expr = inv_expr.sub(lb).truediv(ub - lb)
 
             inv_expr = inv_expr.mul(denom).add(vmin)
 
-            if self.clip:
-                expr = expr.clip(*self.feature_range)
+            inv_exprs[col] = inv_expr
 
-            self.expr_[col] = expr
-            self.inv_expr_[col] = inv_expr
-
-        return self
+        return inv_exprs
 
     def transform(self, df) -> pl.LazyFrame:
-        return with_columns_nonstrict(to_lazyframe(df), self.expr_)
+        return with_columns_nonstrict(to_lazyframe(df), self._get_exprs())
 
     def inverse_transform(self, df) -> pl.LazyFrame:
-        return with_columns_nonstrict(to_lazyframe(df), self.inv_expr_)
+        return with_columns_nonstrict(to_lazyframe(df), self.-_get_inv_exprs())
 
 
 class SampleNormalizer(PolarsTransformer):
