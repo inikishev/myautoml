@@ -96,7 +96,7 @@ class _BaseLearnableELM(BaseEstimator):
             loss = criterion(y_hat, y_torch)
             self.zero_grad()
             loss.backward()
-            self.losses_.append(loss.detach().cpu())
+            self.losses_.append(loss.detach().cpu().item())
             return loss
 
         self.train()
