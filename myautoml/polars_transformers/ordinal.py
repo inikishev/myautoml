@@ -46,6 +46,7 @@ class OrdinalEncoder(PolarsTransformer):
         self.inverse_maps_: dict[str, dict[int | None, Any]] = {}
 
         unique = df.select(pl.all().unique(maintain_order=self.maintain_order).implode()).collect()
+        self.return_dtypes_ = {col_name: unique.schema[col_name].inner for col_name in unique.columns} # type:ignore
 
         # Create mappings from values to their ordinal encodings
         for col_name, unique_vals in unique.to_dicts()[0].items():
@@ -61,26 +62,23 @@ class OrdinalEncoder(PolarsTransformer):
 
             self.inverse_maps_[col_name] = {i: v for v, i in self.maps_[col_name].items()}
 
-        # Create transform expressions
-        kw = {"default": None} if self.allow_unknown else {}
-        self.exprs_ = {col_name:
-            pl.col(col_name).replace_strict(map, return_dtype=self.dtype, **kw)
-            for col_name, map in self.maps_.items()
-        }
-
-        self.inv_exprs_ = {col_name:
-            pl.col(col_name)
-            .replace_strict(inv_map, return_dtype=unique.schema[col_name].inner) # pyright:ignore[reportAttributeAccessIssue]
-            for col_name, inv_map in self.inverse_maps_.items()
-        }
-
         return self
 
     def transform(self, df) -> pl.LazyFrame:
-        return with_columns_nonstrict(to_lazyframe(df), self.exprs_)
+        kw = {"default": None} if self.allow_unknown else {}
+        exprs_ = {
+            col_name: pl.col(col_name).replace_strict(map, return_dtype=self.dtype, **kw)
+            for col_name, map in self.maps_.items()
+        }
+        return with_columns_nonstrict(to_lazyframe(df), exprs_)
 
     def inverse_transform(self, df) -> pl.LazyFrame:
-        return with_columns_nonstrict(to_lazyframe(df), self.inv_exprs_)
+        inv_exprs = {col_name:
+            pl.col(col_name)
+            .replace_strict(inv_map, return_dtype=self.return_dtypes_[col_name])
+            for col_name, inv_map in self.inverse_maps_.items()
+        }
+        return with_columns_nonstrict(to_lazyframe(df), inv_exprs)
 
 
 class MapEncoder(PolarsTransformer):

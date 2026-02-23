@@ -197,7 +197,7 @@ class _BaseDFLinear(BaseEstimator):
 
         return self
 
-    def _predict_raw(self, X):
+    def decision_function(self, X):
         check_is_fitted(self)
         X = validate_data(self, X=X, reset=False)
         X = X.astype(self.W_.dtype)
@@ -253,7 +253,8 @@ class DFLinearClassifier(ClassifierMixin, _BaseDFLinear):
         super().__init__(**kwargs)
 
     def predict_proba(self, X):
-        proba = self._predict_raw(X)
+        proba = self.decision_function(X)
+        if self.activation_ is not None: proba = self.activation_(proba)
         if proba.shape[-1] == 1:
             proba = np.squeeze(proba, -1)
             proba = np.stack([1-proba, proba], -1)
@@ -312,6 +313,7 @@ class DFLinearRegressor(RegressorMixin, _BaseDFLinear):
 
 
     def predict(self, X):
-        y = self._predict_raw(X)
+        y = self.decision_function(X)
+        if self.activation_ is not None: y = self.activation_(y)
         if y.shape[-1] == 1: y = np.squeeze(y, -1)
         return y
