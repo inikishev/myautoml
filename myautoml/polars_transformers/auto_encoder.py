@@ -210,7 +210,7 @@ class AutoEncoder:
                 self.y_encoder_ = Chain(Cast(self.label_, pl.Float64)).fit(y)
 
         if self.y_encoder_ is not None:
-            self.y_schema_ = self.y_encoder_.transform(y).collect_schema().copy()
+            self.y_schema_ = dict(self.y_encoder_.transform(y).collect_schema())
 
         return self
 

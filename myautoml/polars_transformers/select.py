@@ -118,7 +118,7 @@ class DropConstant(PolarsTransformer):
 
         drop_vals = df.select(self.drop_cols_).first().collect()
         self.drop_vals_ = drop_vals.to_dicts()[0]
-        self.dtypes_ = drop_vals.schema
+        self.dtypes_ = dict(drop_vals.schema)
         self.order_ = tuple(n_unique.keys())
 
         return self

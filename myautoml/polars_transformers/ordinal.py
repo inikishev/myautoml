@@ -102,8 +102,8 @@ class MapEncoder(PolarsTransformer):
 
     def fit(self, df):
         df = to_lazyframe(df)
-        self.schema_ = df.collect_schema()
-        self.feature_names_in_ = self.schema_.names()
+        self.feature_names_in_ = df.collect_schema().names()
+        self.dtypes_ = dict(df.collect_schema())
 
         self.maps_ = {k: dict(v) for k,v in self.map.items()} # this avoids mutating self.map
         self.inverse_maps_ = {col_name: {v: k for k, v in map.items()} for col_name, map in self.maps_.items()}
@@ -132,7 +132,7 @@ class MapEncoder(PolarsTransformer):
 
         try:
             return {col_name:
-                pl.col(col_name).replace_strict(inv_map, return_dtype=self.schema_[col_name])
+                pl.col(col_name).replace_strict(inv_map, return_dtype=self.dtypes_[col_name])
                 for col_name, inv_map in self.inverse_maps_.items()
             }
         except KeyError as e:

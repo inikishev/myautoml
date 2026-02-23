@@ -211,14 +211,14 @@ class ToNumpy(PolarsTransformer):
             y = df.select(self.label)
             self.y_chain_: Chain[pl.LazyFrame] = Chain(y_stages).fit(y)
             y_tfm = self.y_chain_.transform(y).collect()
-            self.y_schema_ = y_tfm.collect_schema().copy()
+            self.y_schema_ = dict(y_tfm.collect_schema())
 
 
         assert X is not None
         X = include_exclude_cols(X, include=self.include, exclude=self.exclude)
         self.X_chain_: Chain[pl.LazyFrame] = Chain(X_stages).fit(X)
         X_tfm = self.X_chain_.transform(X)
-        self.X_schema_ = X_tfm.collect_schema().copy()
+        self.X_schema_ = dict(X_tfm.collect_schema())
 
         return self
 
