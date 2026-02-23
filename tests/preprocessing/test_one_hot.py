@@ -115,7 +115,7 @@ def test_unseen_categories():
     train = pl.DataFrame({"cat": ["A", "B"]})
     test = pl.DataFrame({"cat": ["A", "C", None]})
 
-    encoder = OneHotEncoder(include=["cat"], drop_first='none', propagate_nulls=False)
+    encoder = OneHotEncoder(include=["cat"], drop_first='none', propagate_nulls=False, dtype=pl.Int64) # bool doesn't have eq
     encoder.fit(train)
     transformed = encoder.transform(test).collect()
 
@@ -392,7 +392,7 @@ class TestOneHotEncoder:
             pl_testing.assert_series_equal(inverted[col], sample_df[col])
 
     def test_unseen_categories(self, sample_df):
-        encoder = OneHotEncoder(include=["color"], drop_first="none")
+        encoder = OneHotEncoder(include=["color"], drop_first="none", dtype=pl.Int64)
         encoder.fit(sample_df)
 
         new_df = pl.DataFrame({"color": ["purple"]}) # Purple never seen

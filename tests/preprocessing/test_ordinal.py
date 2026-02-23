@@ -20,8 +20,8 @@ def test_ordinal_encoder_basic(sample_df):
     result = encoder.fit_transform(sample_df).collect()
 
     # Check that columns are now integers
-    assert result["cat"].dtype == pl.Int64
-    assert result["num"].dtype == pl.Int64
+    assert result["cat"].dtype == pl.UInt64
+    assert result["num"].dtype == pl.UInt64
     # Check that 'target' was untouched
     assert result["target"].dtype == pl.Int64
     assert result["target"].to_list() == [0, 1, 0, 1]
@@ -44,8 +44,8 @@ def test_ordinal_encoder_exclude(sample_df):
     encoder = OrdinalEncoder(include=None, exclude=["target"])
     result = encoder.fit_transform(sample_df).collect()
 
-    assert result["cat"].dtype == pl.Int64
-    assert result["num"].dtype == pl.Int64
+    assert result["cat"].dtype == pl.UInt64
+    assert result["num"].dtype == pl.UInt64
     assert result["target"].dtype == pl.Int64
     # Ensure target values didn't change (weren't encoded)
     assert result["target"].to_list() == [0, 1, 0, 1]
@@ -77,7 +77,7 @@ def test_ordinal_encoder_pandas_input():
     # Should work because of to_lazyframe utility
     result = encoder.fit_transform(df_pd).collect()
     assert isinstance(result, pl.DataFrame)
-    assert result["a"].dtype == pl.Int64
+    assert result["a"].dtype == pl.UInt64
 
 def test_with_columns_nonstrict_behavior(sample_df):
     """Verify that if a column is missing during transform, it doesn't crash"""
@@ -90,7 +90,7 @@ def test_with_columns_nonstrict_behavior(sample_df):
 
     assert "cat" in result.columns
     assert "num" not in result.columns
-    assert result["cat"].dtype == pl.Int64
+    assert result["cat"].dtype == pl.UInt64
 
 def test_order_consistency(sample_df):
     """Ensure that the integer mapping is consistent between fit and transform"""
@@ -122,10 +122,10 @@ def test_ordinal_exclude_logic(sample_df):
 
     transformed = encoder.fit_transform(sample_df).collect()
 
-    # Manually create expected: only 'cat' should be Int64
+    # Manually create expected: only 'cat' should be UInt64
     # We don't check exact integer values here because unique() order can vary,
     # but we check that the other columns are identical to original.
-    assert transformed["num"].dtype == pl.Int64
+    assert transformed["num"].dtype == pl.UInt64
     assert transformed["target"].dtype == pl.Int64
     assert transformed["cat"].dtype == pl.String
 
@@ -146,7 +146,7 @@ def test_ordinal_consistency_with_mapping(sample_df):
 
     expected = pl.DataFrame({
         "cat": [val_b, val_b, mapping["a"]]
-    }).with_columns(pl.col("cat").cast(pl.Int64))
+    }).with_columns(pl.col("cat").cast(pl.UInt64))
 
     assert_frame_equal(transformed, expected)
 
@@ -162,7 +162,7 @@ def test_ordinal_allow_unknown(sample_df):
     mapping = encoder.maps_["cat"]
     expected = pl.DataFrame({
         "cat": [mapping["a"], None]
-    }).with_columns(pl.col("cat").cast(pl.Int64))
+    }).with_columns(pl.col("cat").cast(pl.UInt64))
 
     assert_frame_equal(transformed, expected)
 
@@ -179,7 +179,7 @@ def test_with_columns_nonstrict_missing_col(sample_df):
     mapping = encoder.maps_["cat"]
     expected = pl.DataFrame({
         "cat": [mapping["a"], mapping["b"]]
-    }).with_columns(pl.col("cat").cast(pl.Int64))
+    }).with_columns(pl.col("cat").cast(pl.UInt64))
 
     assert_frame_equal(transformed, expected)
 
@@ -209,7 +209,7 @@ def test_ordinal_encoder_basic_2():
 
     transformed = encoder.transform(df).collect()
 
-    assert transformed["cat"].dtype == pl.Int64
+    assert transformed["cat"].dtype == pl.UInt64
     assert transformed["cat"].n_unique() == 3
     assert transformed["num"].dtype == pl.Int64  # Untouched column
 
@@ -227,14 +227,14 @@ def test_ordinal_encoder_include_exclude():
     # Include only 'a'
     enc = OrdinalEncoder(include=["a"]).fit(df)
     res = enc.transform(df).collect()
-    assert res["a"].dtype == pl.Int64
+    assert res["a"].dtype == pl.UInt64
     assert res["b"].dtype == pl.String
 
     # Exclude 'a'
     enc = OrdinalEncoder(include=None, exclude=["a"]).fit(df)
     res = enc.transform(df).collect()
     assert res["a"].dtype == pl.String
-    assert res["b"].dtype == pl.Int64
+    assert res["b"].dtype == pl.UInt64
 
 def test_ordinal_encoder_propagate_nulls_true():
     df = pl.DataFrame({"a": ["x", None, "y"]})
@@ -294,7 +294,7 @@ def test_ordinal_encoder_lazy_input():
     res = encoder.transform(df)
 
     assert isinstance(res, pl.LazyFrame)
-    assert res.collect()["a"].dtype == pl.Int64
+    assert res.collect()["a"].dtype == pl.UInt64
 
 def test_ordinal_encoder_non_existent_col_in_transform():
     # Tests with_columns_nonstrict
@@ -319,13 +319,13 @@ def test_map_encoder_basic():
         "num": {10: 100, 20: 200, 30: 300}
     }
 
-    encoder = MapEncoder(map=mapping)
+    encoder = MapEncoder(map=mapping, return_dtype=pl.Int64)
     encoded_df = encoder.fit_transform(df).collect()
 
     expected = pl.DataFrame({
         "cat": [0, 1, 0, 2],
         "num": [100, 200, 100, 300]
-    }).with_columns(pl.all().cast(pl.Int64))
+    })
 
     assert_frame_equal(encoded_df, expected)
 
@@ -335,12 +335,12 @@ def test_map_encoder_allow_nulls():
     })
 
     # allow_nulls=True is default
-    encoder = MapEncoder(map={"a": {"x": 1, "y": 2}})
+    encoder = MapEncoder(map={"a": {"x": 1, "y": 2}}, return_dtype=pl.Int64)
     encoded_df = encoder.fit_transform(df).collect()
 
     expected = pl.DataFrame({
         "a": [1, None, 2]
-    }).with_columns(pl.col("a").cast(pl.Int64))
+    })
 
     assert_frame_equal(encoded_df, expected)
 
@@ -351,12 +351,12 @@ def test_map_encoder_allow_unknown():
     })
 
     # allow_unknown=True maps missing keys to None
-    encoder = MapEncoder(map={"a": {"x": 1}}, unknown_strategy='null')
+    encoder = MapEncoder(map={"a": {"x": 1}}, unknown_strategy='null', return_dtype=pl.Int64)
     encoded_df = encoder.fit_transform(df).collect()
 
     expected = pl.DataFrame({
         "a": [1, None]
-    }).with_columns(pl.col("a").cast(pl.Int64))
+    })
 
     assert_frame_equal(encoded_df, expected)
 
@@ -382,13 +382,12 @@ def test_map_encoder_raises_on_missing_key():
 
     # Mapping contains "c" which isn't in df
     mapping = {
-        "a": {"x": 0, "y": 1},
-        "c": {"foo": 100}
+        "a": {"x": 0, "c": 1},
     }
 
-    encoder = MapEncoder(map=mapping)
+    encoder = MapEncoder(map=mapping, unknown_strategy='raise')
 
-    with pytest.raises(KeyError):
+    with pytest.raises(pl.exceptions.InvalidOperationError):
         encoder.fit_transform(df).collect()
 
 def test_map_encoder_partial_columns():
@@ -403,13 +402,13 @@ def test_map_encoder_partial_columns():
         "a": {"x": 0, "y": 1},
     }
 
-    encoder = MapEncoder(map=mapping)
+    encoder = MapEncoder(map=mapping, return_dtype=pl.Int64)
     result = encoder.fit_transform(df).collect()
 
     expected = pl.DataFrame({
         "a": [0, 1],
         "b": [1, 2]
-    }).with_columns(pl.col("a").cast(pl.Int64))
+    })
 
     assert_frame_equal(result, expected)
 

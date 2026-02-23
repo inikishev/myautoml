@@ -50,7 +50,7 @@ class OrdinalEncoder(PolarsTransformer):
 
         # Create mappings from values to their ordinal encodings
         for col_name, unique_vals in unique.to_dicts()[0].items():
-            if self.maintain_order: unique_vals = sorted(unique_vals)
+            if self.maintain_order: unique_vals = sorted(unique_vals, key=lambda x: "" if x is None else x)
 
             if self.propagate_nulls and (None in unique_vals):
                 unique_vals.remove(None) # null won't be mapped to integer
@@ -121,7 +121,7 @@ class MapEncoder(PolarsTransformer):
 
         elif self.unknown_strategy == 'passthrough':
             return {col_name:
-                pl.col(col_name).replace(map, return_dtype=self.return_dtype)
+                pl.col(col_name).replace_strict(map, return_dtype=self.return_dtype)
                 for col_name, map in self.maps_.items()
             }
 

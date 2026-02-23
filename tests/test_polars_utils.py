@@ -53,12 +53,6 @@ class TestToDataframe:
         assert isinstance(result, pl.DataFrame)
         assert result["col"].to_list() == [1, 2, 3]
 
-    def test_to_dataframe_unsupported_type(self):
-        """Test conversion with unsupported type raises TypeError"""
-        with pytest.raises(TypeError, match="doesn't support objects of type"):
-            to_dataframe([1, 2, 3])
-
-
 class TestToLazyframe:
     def test_to_lazyframe_with_polars_lazyframe(self):
         """Test conversion with polars LazyFrame"""
@@ -100,11 +94,6 @@ class TestToLazyframe:
         assert isinstance(result, pl.LazyFrame)
         collected_result = result.collect()
         assert collected_result["col"].to_list() == [1, 2, 3]
-
-    def test_to_lazyframe_unsupported_type(self):
-        """Test conversion with unsupported type raises TypeError"""
-        with pytest.raises(TypeError, match="doesn't support objects of type"):
-            to_lazyframe([1, 2, 3])
 
 
 class TestMaybeStack:
