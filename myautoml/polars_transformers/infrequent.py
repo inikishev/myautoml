@@ -58,8 +58,13 @@ class MergeInfrequent(PolarsTransformer):
             self.noop_ = True
             return self
 
-        self.exprs_ = {}
-        for col_name, categories in counts.to_dicts()[0].items():
+        self.counts_ = counts.to_dicts()[0]
+        return self
+
+
+    def _get_exprs(self):
+        exprs = {}
+        for col_name, categories in self.counts_.items():
 
             # here `categories` is like this:
             # [{col_name: category1_name, 'count': 513}, {col_name: category2_name, 'count': 141}]
@@ -97,12 +102,12 @@ class MergeInfrequent(PolarsTransformer):
                 .otherwise(col)
             )
 
-            self.exprs_[col_name] = expr.alias(col_name)
+            exprs[col_name] = expr.alias(col_name)
 
-        return self
+        return exprs
 
 
     def transform(self, df) -> pl.LazyFrame:
         df = to_lazyframe(df)
         if self.noop_: return df
-        return with_columns_nonstrict(df, self.exprs_)
+        return with_columns_nonstrict(df, self._get_exprs())
