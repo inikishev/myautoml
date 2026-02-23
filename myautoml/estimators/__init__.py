@@ -9,7 +9,7 @@ from .hill_climbing import (
     HillClimbingEnsembleSelector,
 )
 from .kernel_approximation import LaplaceRFF
-from .ridge_classifier import RidgeClassifierCV
+from .ridge_classifier import RidgeClassifierProba, RidgeClassifierCVProba
 from .utility import ToCUDA
 from .weighted_ensemble import (
     GreedyWeightedEnsembleClassifier,

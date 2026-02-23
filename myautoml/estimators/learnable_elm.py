@@ -34,6 +34,7 @@ class _BaseLearnableELM(BaseEstimator):
         rprop_iters,
         lbfgs_iters,
         device,
+        verbose: int
     ):
         self.criterion = criterion
         self.device = device
@@ -43,6 +44,7 @@ class _BaseLearnableELM(BaseEstimator):
         self.act_cls = act_cls
         self.rprop_iters = rprop_iters
         self.lbfgs_iters = lbfgs_iters
+        self.verbose = verbose
 
     def fit(self, X, y):
         validate_data(self, X=X, y=y)
@@ -70,19 +72,22 @@ class _BaseLearnableELM(BaseEstimator):
         emb_config.setdefault("emb_dim", self.emb_dim)
         self.embeddings_ = TorchEmbeddings(**emb_config).to(device=self.device).fit(X)
 
-        y_torch = torch.tensor(y, device=self.device)
+        y_loss = torch.tensor(y, device=self.device)
         if self.is_classification:
-            if n_targets > 2: y_float = F.one_hot(y_torch, len(self.classes_)) # pylint:disable=not-callable
-            else: y_float = y_torch.unsqueeze(-1)
+            if n_targets > 2:
+                y_lstsq = F.one_hot(y_loss, len(self.classes_)).float() # pylint:disable=not-callable
+                # y_loss remains long
+            else:
+                y_lstsq = y_loss = y_loss.unsqueeze(-1).float()
         else:
-            y_float = y_torch
-        y_float = y_float.float()
-        assert y_float.ndim == 2 and y_float.shape[-1] == n_targets, y_torch.shape
+            y_lstsq = y_loss = y_loss.float()
+
+        assert y_lstsq.ndim == 2 and y_lstsq.shape[-1] == n_targets, y_loss.shape
 
         X_num, X_cat = self.embeddings_.get_inputs(X)
         self.linear_ = nn.Linear(self.embeddings_.out_channels_, self.hidden_dim).to(device=self.device)
         self.act_ = self.act_cls().to(device=self.device)
-        intercept = torch.ones((y_torch.shape[0], 1), device=self.device)
+        intercept = torch.ones((y_loss.shape[0], 1), device=self.device)
 
         self.W2_ = None
         self.losses_ = []
@@ -91,12 +96,13 @@ class _BaseLearnableELM(BaseEstimator):
             X = self.embeddings_(X_num, X_cat)
             X_hidden = self.act_(self.linear_(X)) # (n_samples, hidden_dim)
             X_hidden = torch.cat([X_hidden, intercept], -1)
-            self.W2_ = torch.linalg.lstsq(X_hidden, y_float).solution # (hidden_dim+1, n_targets) # pylint:disable=not-callable
+            self.W2_ = torch.linalg.lstsq(X_hidden, y_lstsq).solution # (hidden_dim+1, n_targets) # pylint:disable=not-callable
             y_hat = X_hidden @ self.W2_
-            loss = criterion(y_hat, y_torch)
+            loss = criterion(y_hat, y_loss)
             self.zero_grad()
             loss.backward()
             self.losses_.append(loss.detach().cpu().item())
+            if self.verbose >= 2: print(self.losses_[-1])
             return loss
 
         self.train()
@@ -177,6 +183,7 @@ class LearnableELMClassifier(ClassifierMixin, _BaseLearnableELM):
         rprop_iters = 1000,
         lbfgs_iters = 1000,
         device = CUDA_IF_AVAILABLE,
+        verbose: int = 0,
     ):
         kwargs = locals().copy()
         del kwargs["self"], kwargs["__class__"]
@@ -220,6 +227,7 @@ class LearnableELMRegressor(RegressorMixin, _BaseLearnableELM):
         rprop_iters=1000,
         lbfgs_iters=1000,
         device=CUDA_IF_AVAILABLE,
+        verbose: int = 0,
     ):
         kwargs = locals().copy()
         del kwargs["self"], kwargs["__class__"]
