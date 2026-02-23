@@ -33,12 +33,12 @@ class MissingIndicator(PolarsTransformer):
         has_missing = df.select(pl.all().has_nulls()).collect().to_dicts()[0]
         self.cols_ = [col for col, has in has_missing.items() if has]
         self.drop_cols_ = [f"{col}{self.suffix}" for col in self.cols_]
-        self.expr_ = pl.col(self.cols_).is_null().cast(pl.UInt8).name.suffix(self.suffix)
 
         return self
 
     def transform(self, df) -> pl.LazyFrame:
-        return to_lazyframe(df).with_columns(self.expr_)
+        expr = pl.col(self.cols_).is_null().cast(pl.UInt8).name.suffix(self.suffix)
+        return to_lazyframe(df).with_columns(expr)
 
     def inverse_transform(self, df) -> pl.LazyFrame:
         return to_lazyframe(df).drop(self.drop_cols_, strict=False)
@@ -66,16 +66,18 @@ class MissingStatistics(PolarsTransformer):
         self.feature_names_in_ = df.collect_schema().names()
         df = include_exclude_cols(df, include=self.include, exclude=self.exclude)
 
-        names = df.collect_schema().names()
+        self.names_ = df.collect_schema().names()
 
-        # the expression should be strictly with same columns as during fit, to get same statistics
-        # so we collect schema here and don't use with_columns_nonstrict
-        self.expr_ = pl.mean_horizontal(pl.col(names).is_null()).alias(self.col_name)
         return self
 
     def transform(self, df) -> pl.LazyFrame:
         df = to_lazyframe(df)
-        df = df.with_columns(self.expr_)
+
+        # the expression should be strictly with same columns as during fit, to get same statistics
+        # so we collect schema here and don't use with_columns_nonstrict
+        expr = pl.mean_horizontal(pl.col(self.names_).is_null()).alias(self.col_name)
+
+        df = df.with_columns(expr)
         return df
 
     def inverse_transform(self, df) -> pl.LazyFrame:
@@ -123,7 +125,6 @@ class SimpleImputer(PolarsTransformer):
 
         # For constant strategy we don't need any statistics
         if self.strategy == 'constant':
-            self.exprs_ = {col: pl.col(col).fill_null(self.fill_value) for col in df.collect_schema().keys()}
             return self
 
         # Create expressions to get stats
@@ -140,17 +141,22 @@ class SimpleImputer(PolarsTransformer):
             raise RuntimeError(f'Unknown strategy "{self.strategy}", must be one of: '
                                     '["min", "max", "mean", "median", "mode", "constant"]')
 
-        fill_vals = df.select(expr).collect().to_dicts()[0]
-
-        # all-null cols should be skipped because expr.fill_null(None) raises an exception
-        # since None is the default value that indicates that full_null(strategy=...) is specified
-        self.exprs_ = {k: pl.col(k).fill_null(v) for k,v in fill_vals.items() if v is not None}
+        self.fill_vals_ = df.select(expr).collect().to_dicts()[0]
         return self
 
     def transform(self, df) -> pl.LazyFrame:
         df = to_lazyframe(df)
         if self.add_indicator: df = self.indicator_.transform(df)
-        return with_columns_nonstrict(df, self.exprs_)
+
+        if self.strategy == "constant":
+            exprs = {col: pl.col(col).fill_null(self.fill_value) for col in df.collect_schema().keys()}
+
+        else:
+            # all-null cols should be skipped because expr.fill_null(None) raises an exception
+            # since None is the default value that indicates that full_null(strategy=...) is specified
+            exprs = {k: pl.col(k).fill_null(v) for k,v in self.fill_vals_.items() if v is not None}
+
+        return with_columns_nonstrict(df, exprs)
 
     def inverse_transform(self, df) -> pl.LazyFrame: # inverse transform is only to remove indicators
         df = to_lazyframe(df)
