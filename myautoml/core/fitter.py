@@ -557,35 +557,20 @@ class TabularFitter:
         method: str | None,
         is_categorical: bool | None,
         use_folds: bool,
+        max_folds: int | None,
         is_supervised: bool,
 
         inputs: list[tuple[str | None, str | None]],
-        max_folds: int | None,
+
+        sample_weight: np.ndarray | tuple[str, str | None] | None,
+        sample_weight_fn: Callable[[np.ndarray], np.ndarray] | None,
+
+        groups: list[str],
 
         use_unlabeled: bool,
-        fit_fn: Callable[[Any, pl.DataFrame, pl.Series, pl.DataFrame | None], Any],
+        fit_fn: Callable[[Any, pl.DataFrame, pl.Series, pl.DataFrame | None, np.ndarray | None], Any],
     ) -> np.ndarray:
-        """Fit this estimator to the dataset.
-
-        If estimator is scored, returns a numpy array with per-fold errors (for hyperparameter tuning).
-
-        Args:
-            name: unique name of the estimator.
-            estimator: estimator to fit.
-            method: default method on the estimator used to get the outputs. Note that if estimator is supervised,
-                ``predict`` / ``predict_proba`` are always used for scoring. If None, it is set to
-                to ``"predict_proba"`` or ``"predict"`` based on what the estimator supports.
-            is_categorical: whether output of ``estimator.method`` should be converted to categorical,
-                may be inferred and ignored in some cases. If not specified, inferred from problem type or output dtype. If ``estimator`` already outputs a dataframe with categorical dtypes, this can be set tp False.
-            use_folds: whether to use folds or fit this estimator to all data, only for unsupervised estimators.
-            is_supervised: whether this estimator is supervised and should be scored.
-            inputs: list of tuples ``(estimator, method)``, ``(None, None)`` means original features.
-            max_folds: merges folds if number of folds is larger than this value, for estimators that are slow to fit.
-            use_unlabeled: set this to True if ``estimator`` and ``fit_fn`` use unlabeled data,
-                False skips the potentially expensive operation of getting ``inputs``
-                predictions on the unlabeled data.
-            fit_fn: Function called as ``fn(estimator, X, y, X_unlabeled)``.
-        """
+        """Fits an estimator to the dataset. See ``fit_supervised`` and ``fit_unsupervised`` for arguments."""
         if max_folds is not None:
             if max_folds <= 1:
                 raise RuntimeError(f"max_folds should be an integer larger than 1, got {max_folds}")
@@ -625,6 +610,9 @@ class TabularFitter:
         method_was_none = method is None
         is_categorical_was_none = is_categorical is None
         is_tested = False
+        in_features = None
+        out_features = None
+        sample_weight_type = None
 
         # ------------------------- Fit to each set and fold ------------------------- #
         for set_i in range(self.n_fold_sets):
@@ -633,6 +621,27 @@ class TabularFitter:
                 set_i = set_i,
                 inputs = inputs,
             )
+
+            # --- Load sample_weight
+            if isinstance(sample_weight, tuple):
+                sw_est, sw_method = sample_weight
+                sample_weight_type = (sw_est, sw_method)
+                set_sample_weight = self.get_outputs_oof(set_i, sw_est, sw_method).to_numpy()
+
+            else:
+                set_sample_weight = sample_weight
+                if isinstance(sample_weight, np.ndarray): sample_weight_type = "array"
+                elif sample_weight is not None:
+                    raise RuntimeError("sample_weight must be np.ndarray, length-2 tuple or None.")
+
+            if set_sample_weight is not None:
+                if sample_weight_fn is not None: set_sample_weight = sample_weight_fn(set_sample_weight)
+                if set_sample_weight.shape not in ((X_oof.height, 1), (X_oof.height, )):
+                    raise RuntimeError(f"Sample weights have shape {set_sample_weight.shape}, but they must be "
+                                       f"{(X_oof.height, 1)} or {(X_oof.height, )}")
+            # ---
+
+            in_features = X_oof.width
 
             oof_preds_list = []
             oof_proba_list = []
@@ -675,7 +684,9 @@ class TabularFitter:
                     else:
                         X_unlabeled = None
 
-                    fitted_estimator = fit_fn(estimator, X_train, y_train, X_unlabeled)
+                    fold_sample_weight = set_sample_weight
+                    if fold_sample_weight is not None: fold_sample_weight = fold_sample_weight[train_index]
+                    fitted_estimator = fit_fn(estimator, X_train, y_train, X_unlabeled, fold_sample_weight)
 
                     if fitted_estimator is None: # pyright:ignore[reportUnnecessaryComparison]
                         raise RuntimeError(f"fit_fn for {name} returned None. Make sure estimator.fit returns self.")
@@ -779,10 +790,12 @@ class TabularFitter:
                     assert method is not None
                     height = min(100, X_oof.height)
                     output = polars_utils.to_dataframe(getattr(fitted_estimator, method)(X_oof.head(height)))
+
                     if output.height != height:
                         raise RuntimeError(
                             f"Estimator {name} received a frame of shape {X_oof.shape}, and returned shape {output.shape}")
 
+                    out_features = output.width
                     if is_categorical is None:
                         is_categorical = (
                             output.width == 1 and
@@ -814,6 +827,7 @@ class TabularFitter:
                 assert method is not None
                 schema = [f"{name}.{method}-{i}" for i in range(oof_preds.shape[1])]
                 oof_preds = pl.from_numpy(oof_preds, schema)
+                if method == "predict": out_features = oof_preds.width
 
                 assert is_categorical is not None
                 if is_categorical:
@@ -838,7 +852,9 @@ class TabularFitter:
 
                     assert method is not None
                     schema = [f"{name}.{method}-{i}" for i in range(oof_proba.shape[1])]
-                    pl.from_numpy(oof_proba, schema).write_parquet(dir / "data" / f"predict_proba-{set_i}.parquet")
+                    oof_proba = pl.from_numpy(oof_proba, schema)
+                    if method == "predict_proba": out_features = oof_proba.width
+                    oof_proba.write_parquet(dir / "data" / f"predict_proba-{set_i}.parquet")
                     del oof_proba
 
                 else:
@@ -851,6 +867,8 @@ class TabularFitter:
         assert is_categorical is not None
         assert obj_qualname is not None
         assert obj_repr is not None
+        assert in_features is not None
+        assert out_features is not None
 
         if method_was_none: self.logger.info('Inferred method as "%s"', method)
         if is_categorical_was_none: self.logger.info("Inferred is_categorical as %s", is_categorical)
@@ -865,6 +883,11 @@ class TabularFitter:
             "is_categorical": is_categorical,
             "is_supervised": is_supervised,
             "supports_proba": supports_proba,
+            "in_features": in_features,
+            "out_features": out_features,
+            "sample_weight_type": sample_weight_type,
+            "sample_weight_fn": python_utils.get_qualname(sample_weight_fn) if sample_weight_fn is not None else None,
+            "groups": groups,
             "use_folds": use_folds,
             "fold_map": fold_map, # note: int keys are converted to str by json
             "n_fitted": n_fitted,
@@ -912,12 +935,18 @@ class TabularFitter:
         estimator,
         method: str | None = None,
         is_categorical: bool | None = None,
-
         inputs: str | None | Sequence[str | None] | Sequence[tuple[str | None, str | None]] = None,
-        max_folds: int | None = None,
+
+        sample_weight: np.ndarray | str | tuple[str, str | None] | None = None,
+        sample_weight_fn: Callable[[np.ndarray], np.ndarray] | None = None,
+
+        groups: str | Sequence[str] | None = None,
 
         use_unlabeled: bool = False,
-        fit_fn: Callable[[Any, pl.DataFrame, pl.Series, pl.DataFrame | None], Any] = lambda estimator, X, y, X_unlabeled: estimator.fit(X, y),
+        max_folds: int | None = None,
+        fit_fn: Callable[
+            [Any, pl.DataFrame, pl.Series, pl.DataFrame | None, np.ndarray | None], Any
+        ] = _fitter_utils.default_fit_fn,
     ) -> np.ndarray:
         """Fit a supervised estimator to the dataset and score it.
 
@@ -934,14 +963,24 @@ class TabularFitter:
                 where original features are written as ``(None, None)``.
                 If ``method`` is None or not provided, uses the default method specified for the estimator.
                 Defaults to None.
-            max_folds: merges folds if number of folds is larger than this value, for estimators that are slow to fit.
+            sample_weight: numpy array of shape ``(n_samples, )``, or name of estimator or tuple
+                ``(estimator, method)``, which should output a single column that will be used as sample weights.
+            sample_weight_fn: function applied to sample weights if they are specified.
+            groups: string or list of string names of groups for managing estimators. You can select estimators
+                from a group in ``select_fitted``.
             use_unlabeled: set this to True if ``estimator`` and ``fit_fn`` use unlabeled data,
                 False (default) skips the potentially expensive operation of computing stacked unlabeled inputs.
+            max_folds: merges folds if number of folds is larger than this value, for estimators that are slow to fit.
             fit_fn: Function called as ``fn(estimator, X, y, X_unlabeled)`` which should return fitted estimator.
-                Defaults to ``estimator.fit(X, y)``.
+                Defaults to ``estimator.fit(X, y, sample_weights=sample_weights)``.
         """
 
         inputs = _fitter_utils._validate_inputs(inputs)
+
+        if isinstance(sample_weight, str): sample_weight = (sample_weight, None)
+        if groups is None: groups = []
+        elif isinstance(groups, str): groups = [groups, ]
+        else: groups = list(groups)
 
         return self._fit_estimator(
             name = name,
@@ -951,6 +990,9 @@ class TabularFitter:
             use_folds = True,
             is_supervised = True,
             inputs = inputs,
+            sample_weight=sample_weight,
+            sample_weight_fn=sample_weight_fn,
+            groups=groups,
             max_folds = max_folds,
             use_unlabeled = use_unlabeled,
             fit_fn = fit_fn,
@@ -966,10 +1008,17 @@ class TabularFitter:
         is_categorical: bool | None = None,
 
         inputs: str | None | Sequence[str | None] | Sequence[tuple[str | None, str | None]] = None,
-        max_folds: int | None = None,
+
+        sample_weight: np.ndarray | str | tuple[str, str | None] | None = None,
+        sample_weight_fn: Callable[[np.ndarray], np.ndarray] | None = None,
+
+        groups: str | Sequence[str] | None = None,
 
         use_unlabeled: bool = False,
-        fit_fn: Callable[[Any, pl.DataFrame, pl.Series, pl.DataFrame | None], Any] = lambda estimator, X, y, X_unlabeled: estimator.fit(X, y),
+        max_folds: int | None = None,
+        fit_fn: Callable[
+            [Any, pl.DataFrame, pl.Series, pl.DataFrame | None, np.ndarray | None], Any
+        ] = _fitter_utils.default_fit_fn,
     ) -> None:
         """Fit an unsupervised estimator or a feature transformer to the dataset.
 
@@ -986,15 +1035,25 @@ class TabularFitter:
                 where original features are written as ``(None, None)``.
                 If ``method`` is None or not provided, uses the default method specified for the estimator.
                 Defaults to None.
-            max_folds: merges folds if number of folds is larger than this value, for estimators that are slow to fit.
-                Ignored if ``use_folds=False``.
+            sample_weight: numpy array of shape ``(n_samples, )``, or name of estimator or tuple
+                ``(estimator, method)``, which should output a single column that will be used as sample weights.
+            sample_weight_fn: function applied to sample weights if they are specified.
+            groups: string or list of string names of groups for managing estimators. You can select estimators
+                from a group in ``select_fitted``.
             use_unlabeled: set this to True if ``estimator`` and ``fit_fn`` use unlabeled data,
                 False (default) skips the potentially expensive operation of computing stacked unlabeled inputs.
+            max_folds: merges folds if number of folds is larger than this value, for estimators that are slow to fit.
+                Ignored if ``use_folds=False``.
             fit_fn: Function called as ``fn(estimator, X, y, X_unlabeled)`` which should return fitted estimator.
                 Defaults to ``estimator.fit(X, y)``.
         """
 
         inputs = _fitter_utils._validate_inputs(inputs)
+
+        if isinstance(sample_weight, str): sample_weight = (sample_weight, None)
+        if groups is None: groups = []
+        elif isinstance(groups, str): groups = [groups, ]
+        else: groups = list(groups)
 
         self._fit_estimator(
             name = name,
@@ -1004,6 +1063,9 @@ class TabularFitter:
             use_folds = use_folds,
             is_supervised = False,
             inputs = inputs,
+            sample_weight = sample_weight,
+            sample_weight_fn = sample_weight_fn,
+            groups = groups,
             max_folds = max_folds,
             use_unlabeled = use_unlabeled,
             fit_fn = fit_fn,
@@ -1121,6 +1183,7 @@ class TabularFitter:
         name_expr: str | None = None,
         supervised: bool = True,
         unsupervised: bool = False,
+        groups: str | Sequence[str] | None = None,
         stack_level: int | None = None,
         min_stack_level: int | None = None,
         max_stack_level: int | None = None,
@@ -1133,6 +1196,7 @@ class TabularFitter:
             name_expr: Selects estimators if the name contains a substring that matches a pattern. Defaults to None.
             supervised: whether to include supervised estimators. Defaults to True.
             unsupervised: whether to include unsupervised estimators. Defaults to False.
+            groups: selects estimators present in any of those groups.
             stack_level: Selects estimators of specified stack level. Defaults to None.
             min_stack_level: Selects estimators with equal or higher stack level. Defaults to None.
             max_stack_level: Selects estimators with equal or lower stack level. Defaults to None.
@@ -1150,7 +1214,36 @@ class TabularFitter:
         if max_stack_level is not None:
             estimators = estimators.filter(pl.col("stack_level") <= max_stack_level)
 
+        if groups is not None:
+            if isinstance(groups, str): groups = [groups]
+            estimators = estimators.filter(pl.col("groups").list.set_intersection(groups).len() > 0)
+
+        if len(estimators) == 0:
+            self.logger.warning("Found no estimators matching select_estimators arguments.")
+            return []
+
         return estimators["name"].to_list()
+
+    def delete_estimator(self, names: str | Sequence[str]):
+        """Deletes estimator or estimators. If specified estimators are children of other estimators,
+        an exception will be raised instead."""
+        if isinstance(names, str): names = (names, )
+
+        all_dirs = os.listdir(self.root / "estimators")
+        for name in names:
+            if name not in all_dirs:
+                raise FileNotFoundError(f'estimator "{name}" doesn\'t exist.')\
+
+        # make sure estimators aren't used in any other estimators
+        other_estimators = self.list_fitted(exclude=None).filter(pl.col("name").is_in(names).not_())
+
+        for name, children in zip(other_estimators["name"], other_estimators["children"]):
+            matches = set(names).intersection(children)
+            if len(matches) > 0:
+                raise RuntimeError(f'Can\'t delete {matches} because they are used in "{name}"')
+
+        for name in names:
+            shutil.rmtree(self.root / "estimators" / name)
 
     def preview_stacked(
         self,

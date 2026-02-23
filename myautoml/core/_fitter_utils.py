@@ -654,9 +654,27 @@ def _get_fitted_configs(self: "TabularFitter") -> dict[str, dict[str, Any]]:
 
     return configs
 
-def semi_supervised_classifier_fit_fn(estimator, X: pl.DataFrame, y: pl.Series, X_unlabeled: pl.DataFrame | None):
-    assert X_unlabeled is not None
-    assert y.dtype.is_integer(), y.dtype
+def default_fit_fn(estimator, X: pl.DataFrame, y: pl.Series,
+                   X_unlabeled: pl.DataFrame | None, sample_weight: np.ndarray | None):
+    if X_unlabeled is not None:
+        raise RuntimeError("`default_fit_fn` doesn't use X_unlabeled. "
+                           "Specify a custom fit_fn, or use `myautoml.unlabeled_fit_fn` or "
+                           "`myautoml.semi_supervised_classifier_fit_fn`")
+
+    if sample_weight is None: return estimator.fit(X, y, sample_weight=sample_weight)
+    return estimator.fit(X, y)
+
+
+def semi_supervised_classifier_fit_fn(estimator, X: pl.DataFrame, y: pl.Series,
+                                      X_unlabeled: pl.DataFrame | None, sample_weight: np.ndarray | None):
+    if sample_weight is not None:
+        raise RuntimeError("semi_supervised_classifier_fit_fn doesn't support sample_weight")
+
+    if X_unlabeled is None:
+        raise RuntimeError("semi_supervised_classifier_fit_fn requires X_unlabeled (make sure to set use_unlabeled=True")
+
+    if y.dtype.is_float():
+        raise RuntimeError(f"dtype of labels is {y.dtype}, semi_supervised_classifier_fit_fn requires integer")
 
     X_full = pl.concat([X, X_unlabeled], how='vertical_relaxed')
 
@@ -665,6 +683,13 @@ def semi_supervised_classifier_fit_fn(estimator, X: pl.DataFrame, y: pl.Series, 
 
     return estimator.fit(X_full, y_full)
 
-def unlabeled_fit_fn(estimator, X: pl.DataFrame, y: pl.Series, X_unlabeled: pl.DataFrame | None):
-    assert X_unlabeled is not None
+def unlabeled_fit_fn(estimator, X: pl.DataFrame, y: pl.Series,
+                     X_unlabeled: pl.DataFrame | None, sample_weight: np.ndarray | None):
+
+    if sample_weight is not None:
+        raise RuntimeError("unlabeled_fit_fn doesn't support sample_weight")
+
+    if X_unlabeled is None:
+        raise RuntimeError("unlabeled_fit_fn requires X_unlabeled (make sure to set use_unlabeled=True")
+
     return estimator.fit(pl.concat([X, X_unlabeled], how='vertical_relaxed'))
