@@ -41,12 +41,13 @@ class StandardScaler(PolarsTransformer):
         self.mean_ = df.fill_nan(None).mean().collect().to_dicts()[0]
         self.std_ = df.fill_nan(None).std().with_columns(pl.all().clip(lower_bound=1e-16)).collect().to_dicts()[0]
 
-        self.expr_ = {}
-        self.inv_expr_ = {}
+        return self
+
+    def _get_exprs(self):
+        exprs = {}
 
         for col, mean in self.mean_.items():
             expr = pl.col(col)
-            inv_expr = pl.col(col)
 
             if self.with_mean:
                 expr = expr.sub(mean)
@@ -54,21 +55,33 @@ class StandardScaler(PolarsTransformer):
             if self.with_std:
                 std = self.std_[col]
                 expr = expr.truediv(std)
+
+            exprs[col] = expr
+
+        return exprs
+
+    def _get_inv_exprs(self):
+        inv_exprs = {}
+
+        for col, mean in self.mean_.items():
+            inv_expr = pl.col(col)
+
+            if self.with_std:
+                std = self.std_[col]
                 inv_expr = inv_expr.mul(std)
 
             if self.with_mean:
                 inv_expr = inv_expr.add(mean)
 
-            self.expr_[col] = expr
-            self.inv_expr_[col] = inv_expr
+            inv_exprs[col] = inv_expr
 
-        return self
+        return inv_exprs
 
     def transform(self, df) -> pl.LazyFrame:
-        return with_columns_nonstrict(to_lazyframe(df), self.expr_)
+        return with_columns_nonstrict(to_lazyframe(df), self._get_exprs())
 
     def inverse_transform(self, df) -> pl.LazyFrame:
-        return with_columns_nonstrict(to_lazyframe(df), self.inv_expr_)
+        return with_columns_nonstrict(to_lazyframe(df), self._get_inv_exprs())
 
 class MinMaxScaler(PolarsTransformer):
     """Scales each column to have values in a range defined by ``feature_range``.
