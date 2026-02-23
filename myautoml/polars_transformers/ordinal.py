@@ -99,24 +99,28 @@ class MapEncoder(PolarsTransformer):
         self.unknown_strategy: Literal['passthrough', 'null', 'raise'] = unknown_strategy
         self.return_dtype = return_dtype
 
+
     def fit(self, df):
         df = to_lazyframe(df)
-        schema = df.collect_schema()
-        self.feature_names_in_ = schema.names()
+        self.schema_ = df.collect_schema()
+        self.feature_names_in_ = self.schema_.names()
 
         self.maps_ = {k: dict(v) for k,v in self.map.items()} # this avoids mutating self.map
         self.inverse_maps_ = {col_name: {v: k for k, v in map.items()} for col_name, map in self.maps_.items()}
 
-        # Create transform expressions
+        return self
+
+    def _get_exprs(self):
+
         if self.unknown_strategy in ('null', 'raise'):
             kw = {"default": None} if self.unknown_strategy == 'null' else {}
-            self.exprs_ = {col_name:
+            return {col_name:
                 pl.col(col_name).replace_strict(map, return_dtype=self.return_dtype, **kw)
                 for col_name, map in self.maps_.items()
             }
 
         elif self.unknown_strategy == 'passthrough':
-            self.exprs_ = {col_name:
+            return {col_name:
                 pl.col(col_name).replace(map, return_dtype=self.return_dtype)
                 for col_name, map in self.maps_.items()
             }
@@ -124,11 +128,11 @@ class MapEncoder(PolarsTransformer):
         else:
             raise RuntimeError(f'Unknown unknown_strategy "{self.unknown_strategy}"')
 
-
+    def _get_inv_exprs(self):
 
         try:
-            self.inv_exprs_ = {col_name:
-                pl.col(col_name).replace_strict(inv_map, return_dtype=schema[col_name])
+            return {col_name:
+                pl.col(col_name).replace_strict(inv_map, return_dtype=self.schema_[col_name])
                 for col_name, inv_map in self.inverse_maps_.items()
             }
         except KeyError as e:
@@ -137,13 +141,11 @@ class MapEncoder(PolarsTransformer):
                 'present in dataframe passed to MapEncoder.fit method.'
             ) from None
 
-        return self
-
     def transform(self, df) -> pl.LazyFrame:
-        return with_columns_nonstrict(to_lazyframe(df), self.exprs_)
+        return with_columns_nonstrict(to_lazyframe(df), self._get_exprs())
 
     def inverse_transform(self, df) -> pl.LazyFrame:
-        return with_columns_nonstrict(to_lazyframe(df), self.inv_exprs_)
+        return with_columns_nonstrict(to_lazyframe(df), self._get_inv_exprs())
 
 
 class BinaryToBool(PolarsTransformer):
