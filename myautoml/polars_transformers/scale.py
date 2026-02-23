@@ -177,20 +177,20 @@ class SampleNormalizer(PolarsTransformer):
         df = include_exclude_cols(df, include=self.include, exclude=self.exclude)
 
         df = df.select(pl.selectors.numeric())
-        names = df.collect_schema().names()
-
-        # the expression should be strictly with same columns as during fit, to get same statistics
-        # so we collect schema here and don't use with_columns_nonstrict
-        list_expr = pl.concat_list(names)
-        self.expr_ = pl.col(names)
-
-        if self.with_mean:
-            self.expr_ = self.expr_.sub(list_expr.list.mean())
-
-        if self.with_std:
-            self.expr_ = self.expr_.truediv(list_expr.list.std().clip(1e-16))
-
+        self.names_ = df.collect_schema().names()
         return self
 
     def transform(self, df) -> pl.LazyFrame:
-        return to_lazyframe(df).with_columns(self.expr_)
+
+        # the expression should be strictly with same columns as during fit, to get same statistics
+        # so we collect schema here and don't use with_columns_nonstrict
+        list_expr = pl.concat_list(self.names_)
+        expr = pl.col(self.names_)
+
+        if self.with_mean:
+            expr = expr.sub(list_expr.list.mean())
+
+        if self.with_std:
+            expr = expr.truediv(list_expr.list.std().clip(1e-16))
+
+        return to_lazyframe(df).with_columns(expr)
