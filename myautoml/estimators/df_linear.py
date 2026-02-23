@@ -1,28 +1,22 @@
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
+from collections.abc import Callable
+from functools import partial
 
 import numpy as np
 import polars as pl
+import torch
+from torch.nn import functional as F
 from sklearn.base import BaseEstimator, ClassifierMixin, RegressorMixin
+from sklearn.utils import check_random_state
 from sklearn.utils.validation import (
     check_is_fitted,
     validate_data,  # pyright:ignore[reportAttributeAccessIssue]
 )
-from sklearn.utils import check_random_state
+
 from ..metrics.scoring import get_scorer
-
-
 from ..utils import torch_utils
 
-if torch_utils.TORCH_INSTALLED:
-    import torch
-    CUDA_IF_AVAILBLE = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-else:
-    torch = None
-    CUDA_IF_AVAILBLE = None
-
-if TYPE_CHECKING:
-    import torch
+CUDA_IF_AVAILABLE = 'cuda' if torch.cuda.is_available() else "cpu"
 
 class _BaseDFLinear(BaseEstimator):
     is_classification: bool
@@ -30,16 +24,18 @@ class _BaseDFLinear(BaseEstimator):
     def __init__(
         self,
         scoring,
-        l1: float = 0,
-        l2: float = 0,
-        methods = None,
-        jac='3-point',
-        device=CUDA_IF_AVAILBLE,
-        dtype=torch.float32,
-        random_state=0,
-        verbose=False,
+        activation: Callable[[torch.Tensor], torch.Tensor] | None | Literal["auto"],
+        l1: float,
+        l2: float,
+        methods,
+        jac: Literal["2-point", "3-point"],
+        device,
+        dtype,
+        random_state,
+        verbose,
     ):
         self.scoring = scoring
+        self.activation: Callable[[torch.Tensor], torch.Tensor] | None | Literal["auto"] = activation
         self.l1 = l1
         self.l2 = l2
         self.methods = methods
@@ -89,6 +85,16 @@ class _BaseDFLinear(BaseEstimator):
         # print(f"🔍 Baseline Memory: {baseline}")
         # -
 
+        activation = self.activation
+
+        if activation == "auto":
+            if self.is_classification:
+                if n_targets == 1: activation = F.sigmoid
+                else: activation = partial(F.softmax, dim=-1)
+            else:
+                activation = None
+
+        self.activation_ = activation
 
         def objective(x: np.ndarray):
             # -
@@ -119,6 +125,8 @@ class _BaseDFLinear(BaseEstimator):
             b = x_torch[(n_features * n_targets):].view(n_targets)
 
             out = (X @ W + b)
+            if self.activation_ is not None: out = self.activation_(out)
+
             if self.is_classification:
                 if n_targets == 1:
                     out = torch.squeeze(out, -1)
@@ -149,9 +157,10 @@ class _BaseDFLinear(BaseEstimator):
         methods = self.methods
         if methods is None:
             if params.size < 8: methods = ["bfgs", "cobyqa", "cobyla", "powell", "nelder-mead"]
-            elif params.size < 32: methods = ["cobyqa", "cobyla", "powell", "nelder-mead"]
-            elif params.size < 128: methods = ["cobyla", "powell", "nelder-mead",]
-            else: methods = ["powell", "nelder-mead",]
+            elif params.size < 16: methods = ["cobyqa", "cobyla", "powell", "nelder-mead"]
+            elif params.size < 64: methods = ["cobyqa", "cobyla", "powell"]
+            elif params.size < 256: methods = ["cobyla", "powell"]
+            else: methods = ["powell"]
 
         self.eval_count_ = 0
         for method in methods:
@@ -210,13 +219,15 @@ class DFLinearClassifier(ClassifierMixin, _BaseDFLinear):
         If you have a memory leak, disable ``sklearnex``.
 
     Args:
-        scoring: scoring
+        scoring: scoring.
+        activation: final activation function to apply to outputs before computing the loss,
+            "auto" for sigmoid or softmax depending on number of classes.
         l1: L1 regularization. Defaults to 0.
         l2: L2 regularization. Defaults to 0.
         methods: sequence of strings - scipy.optimize.minimize methods. Each method continues from solution found
             by previous method. By default picks methods based on number of parameters. Defaults to None.
         jac: how to compute jacobian, 2-point or 3-point. Defaults to '3-point'.
-        device: device for matrix multiplication, set to "cpu" for small datasets. Defaults to CUDA_IF_AVAILBLE.
+        device: device for matrix multiplication, set to "cpu" for small datasets. Defaults to CUDA_IF_AVAILABLE.
         dtype: dtype. Defaults to torch.float32.
         random_state: seed. Defaults to 0.
         verbose: whether to print optimization results. Defaults to False.
@@ -227,10 +238,12 @@ class DFLinearClassifier(ClassifierMixin, _BaseDFLinear):
     def __init__(
         self,
         scoring,
+        activation: Callable[[torch.Tensor], torch.Tensor] | None | Literal["auto"] = "auto",
         l1: float = 0,
         l2: float = 0,
         methods = None,
-        device=CUDA_IF_AVAILBLE,
+        jac: Literal["2-point", "3-point"] = "3-point",
+        device=CUDA_IF_AVAILABLE,
         dtype=torch.float32,
         random_state=0,
         verbose=False,
@@ -266,12 +279,13 @@ class DFLinearRegressor(RegressorMixin, _BaseDFLinear):
 
     Args:
         scoring: scoring
+        activation: final activation function to apply to outputs before computing the loss.
         l1: L1 regularization. Defaults to 0.
         l2: L2 regularization. Defaults to 0.
         methods: sequence of strings - scipy.optimize.minimize methods. Each method continues from solution found
             by previous method. By default picks methods based on number of parameters. Defaults to None.
         jac: how to compute jacobian, 2-point or 3-point. Defaults to '3-point'.
-        device: device for matrix multiplication, set to "cpu" for small datasets. Defaults to CUDA_IF_AVAILBLE.
+        device: device for matrix multiplication, set to "cpu" for small datasets. Defaults to CUDA_IF_AVAILABLE.
         dtype: dtype. Defaults to torch.float32.
         random_state: seed. Defaults to 0.
         verbose: whether to print optimization results. Defaults to False.
@@ -282,10 +296,12 @@ class DFLinearRegressor(RegressorMixin, _BaseDFLinear):
     def __init__(
         self,
         scoring,
+        activation: Callable[[torch.Tensor], torch.Tensor] | None = None,
         l1: float = 0,
         l2: float = 0,
         methods = None,
-        device=CUDA_IF_AVAILBLE,
+        jac: Literal["2-point", "3-point"] = "3-point",
+        device=CUDA_IF_AVAILABLE,
         dtype=torch.float32,
         random_state=0,
         verbose=False,

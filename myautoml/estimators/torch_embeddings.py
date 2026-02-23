@@ -21,7 +21,7 @@ class TorchEmbeddings(nn.Module):
 
     Args:
         df: dataframe without the target column.
-        out_dim: target total dimension of embedded features.
+        emb_dim: target total dimension of embedded features.
             May be less or more if ``min_dim``, ``max_dim`` or ``max_params`` can't be satisfied.
         min_dim: minimal embedding dim (unless ``max_params`` can not be satisfied). Defaults to 2.
         max_dim: maximal embedding dim per embedding. Defaults to 1024.
@@ -47,7 +47,7 @@ class TorchEmbeddings(nn.Module):
 
     def __init__(
         self,
-        out_dim: int,
+        emb_dim: int,
         min_dim: int | None = 2,
         max_dim: int | None = 1024,
         max_params: int | None = 1_000_000,
@@ -57,7 +57,7 @@ class TorchEmbeddings(nn.Module):
         sparse: bool = False,
     ):
         super().__init__()
-        self.out_dim = out_dim
+        self.emb_dim = emb_dim
         self.min_dim = min_dim
         self.max_dim = max_dim
         self.max_params = max_params
@@ -65,6 +65,8 @@ class TorchEmbeddings(nn.Module):
         self.norm_type = norm_type
         self.scale_grad_by_freq = scale_grad_by_freq
         self.sparse = sparse
+
+        self._ref = nn.Parameter(torch.empty(0)) # reference parameter to store device and dtype
 
     def fit(self, df):
         """Make sure ``df`` doesn't contain the label."""
@@ -77,14 +79,16 @@ class TorchEmbeddings(nn.Module):
         cat_cols = df.select(pl.selectors.categorical())
         num_cols = df.select([c for c in df.columns if c not in cat_cols.columns])
         self.noop_ = (len(cat_cols.columns) == 0)
-        if self.noop_: return self
+        if self.noop_:
+            self.out_channels_ = num_cols.width
+            return self
 
         self.ordinal_ = OrdinalEncoder(include=cat_cols.columns, allow_unknown=True).fit(df)
 
         # Distribute embedding dims among categorical cols
         col_to_num = cat_cols.select(pl.all().n_unique()).to_dicts()[0]
         total_num = sum(col_to_num.values())
-        ratio = self.out_dim / total_num
+        ratio = self.emb_dim / total_num
 
         emb_dims = {
             col: _clip(math.ceil(num * ratio), self.min_dim, self.max_dim)
@@ -94,6 +98,10 @@ class TorchEmbeddings(nn.Module):
             ratio = sum(emb_dims.values()) / self.max_params
             emb_dims = {col: math.ceil(dim * ratio) for col, dim in emb_dims.items()}
 
+        _ = next(iter(self.parameters()))
+        device = _.device
+        dtype = _.dtype
+
         # Create embeddings
         Emb = partial(
             nn.Embedding,
@@ -102,7 +110,7 @@ class TorchEmbeddings(nn.Module):
             scale_grad_by_freq=self.scale_grad_by_freq,
             sparse=self.sparse,
         )
-        self.embeddings_ = nn.ModuleList(Emb(col_to_num[col], dim) for col, dim in emb_dims.items())
+        self.embeddings_ = nn.ModuleList(Emb(col_to_num[col], dim) for col, dim in emb_dims.items()).to(device=device, dtype=dtype)
 
         self.out_channels_ = sum(emb_dims.values()) + len(num_cols.columns)
         self.cat_cols_ = cat_cols.columns.copy()
@@ -117,10 +125,11 @@ class TorchEmbeddings(nn.Module):
         dtype = _.dtype
 
         df = self.encoder_.transform_X(df)
+        if self.noop_: return df.to_torch(return_type='tensor', dtype=pl.Float32).to(device=device, dtype=dtype), None
+
         df = self.ordinal_.transform(df).collect()
         num_cols = df.select(self.num_cols_)
         X_num = num_cols.to_torch(return_type='tensor', dtype=pl.Float32).to(device=device, dtype=dtype)
-        if self.noop_: return X_num, None
 
         cat_cols = df.select(self.cat_cols_)
         X_cat = cat_cols.to_torch(return_type='tensor', dtype=pl.Int64).to(device=device)

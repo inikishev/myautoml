@@ -1144,7 +1144,9 @@ class TabularFitter:
             # note: score_train, etc are arrays of per-fold scores
             # score_train_mean is the mean score and kept by default
             # arrays create a lot of line breaks when displayed and make dataframe less readable.
-            "inputs", "children", "fold_map", "score_train", "score_test", "error_train", "error_test", "used_estimators"),
+            "inputs", "children", "fold_map", "score_train", "score_test",
+            "error_train", "error_test", "used_estimators", "groups"
+        ),
         supervised: bool = True,
         unsupervised: bool = False,
     ):

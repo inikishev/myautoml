@@ -9,7 +9,7 @@ from typing import Any
 
 import numpy as np
 import polars as pl
-from sklearn.base import BaseEstimator, ClassifierMixin, RegressorMixin
+from sklearn.base import BaseEstimator, ClassifierMixin, RegressorMixin, TransformerMixin
 from sklearn.utils.validation import (
     check_is_fitted,
     validate_data,  # pyright:ignore[reportAttributeAccessIssue]
@@ -25,19 +25,19 @@ def _get_individual_preds(X, n_classes:int | None) -> tuple[dict[str, np.ndarray
     X = to_dataframe(X)
 
     models = set()
-    indexes = defaultdict(list)
+    col_indexes = defaultdict(list)
 
     # get all models
     for col in sorted(set(X.columns)):
         if "-" not in col: raise RuntimeError(f"Column {col} has incorrect name, should be f'{{model}}_{{index}}'")
         model, index = col.rsplit("-", 1)
         models.add(model)
-        indexes[model].append(int(index))
+        col_indexes[model].append(int(index))
 
     # split into preds
     preds = {}
     for model in sorted(models):
-        model_cols = [f"{model}-{col}" for col in indexes[model]]
+        model_cols = [f"{model}-{col}" for col in col_indexes[model]]
 
         if n_classes is None:
             preds[model] = X.select(model_cols).to_numpy()
@@ -56,7 +56,7 @@ def _get_individual_preds(X, n_classes:int | None) -> tuple[dict[str, np.ndarray
                     arr = one_hot(arr.astype(np.uint16), n_classes)
             preds[model] = arr
 
-    return preds, indexes
+    return preds, col_indexes
 
 def _make_int(i: int | float, l: int):
     if i == 0: return 0
@@ -70,21 +70,22 @@ def _make_int(i: int | float, l: int):
 
     raise TypeError(type(i))
 
+
 class _BaseGreedyWeightedEnsemble(BaseEstimator):
     is_classification: bool
 
     def __init__(
         self,
         scoring,
-        n_bags: int = 20,
-        p: int | float = 0.5,
-        n_init: int | float | None = 5,
-        max_iter: int = 1_000,
-        max_no_improvement: int = 3,
-        subsample: int | float | None = 1_000_000,
-        max_sec: float | None = None,
-        random_state=0,
-        verbose: int = 0
+        n_bags: int,
+        p: int | float,
+        n_init: int | float | None,
+        max_iter: int,
+        max_no_improvement: int,
+        subsample: int | float | None,
+        max_sec: float | None,
+        random_state,
+        verbose: int,
     ):
         self.scoring = scoring
         self.n_bags = n_bags
@@ -112,7 +113,7 @@ class _BaseGreedyWeightedEnsemble(BaseEstimator):
         if self.is_classification: self.n_classes_ = len(set(y))
         else: self.n_classes_ = None
 
-        preds_dict, indexes = _get_individual_preds(X, self.n_classes_)
+        preds_dict, col_indexes = _get_individual_preds(X, self.n_classes_)
         if len(preds_dict) <= 1:
             raise RuntimeError(f"At least two models are required for greedy weighted ensemble, got {list(preds_dict.keys())}")
 
@@ -120,15 +121,7 @@ class _BaseGreedyWeightedEnsemble(BaseEstimator):
         names = np.asarray(list(preds_dict.keys()), dtype=np.str_)
         del preds_dict
 
-
-        if self.is_classification:
-            if preds_np.shape[-1] == 1:
-                # Handle binary classification case, where only positive label probabilities are provided
-                if np.min(preds_np) < 0 or np.max(preds_np) > 1:
-                    raise RuntimeError("test_pred must contain probabilities, but "
-                                       f"{np.min(preds_np) = }, {np.max(preds_np) = }.")
-                preds_np = np.concatenate([1-preds_np, preds_np], -1)
-
+        if self.is_classification: assert preds_np.shape[-1] > 1
 
         scorer = get_scorer(self.scoring)
 
@@ -232,11 +225,24 @@ class _BaseGreedyWeightedEnsemble(BaseEstimator):
 
         # Normalize and store weights
         self.weights_ = {model: w for model, w  in zip(names, weights / weights.sum()) if w > 0}
-        self.required_cols_ = set(f"{model}-{i}" for model in self.weights_.keys() for i in indexes[model])
+        self.required_cols_ = set(f"{model}-{i}" for model in self.weights_.keys() for i in col_indexes[model])
         return self
 
     def __myautoml_used_estimators__(self):
         return list(self.weights_.keys())
+
+
+    def transform(self, X):
+        check_is_fitted(self)
+
+        X = to_dataframe(X)
+
+        if not set(X.columns).issuperset(self.required_cols_):
+            missing = self.required_cols_.difference(X.columns)
+            raise RuntimeError(f"X is missing the following columns: {missing}")
+
+        # X will only have estimators from ``__myautoml_used_estimators__``
+        return X
 
     def _predict_raw(self, X):
         check_is_fitted(self)
@@ -277,11 +283,11 @@ class GreedyWeightedEnsembleClassifier(ClassifierMixin, _BaseGreedyWeightedEnsem
 
     Args:
         scoring: scoring method
-        n_bags: number of bags. Defaults to 20.
-        p: number/fraction of models in each bag. Defaults to 0.5.
-        n_init: number/fraction of best-performing models to initialize each bag with. Defaults to 5.
+        n_bags: number of bags. Defaults to 1.
+        p: number/fraction of models in each bag. Defaults to 1.0.
+        n_init: number/fraction of best-performing models to initialize each bag with. Defaults to 1.
         max_iter: maximum number of iterations per bag. Defaults to 1_000.
-        max_no_improvement: maximum number of hill-climbing without improvement. Defaults to 3.
+        max_no_improvement: maximum number of hill-climbing without improvement. Defaults to 4.
         subsample: number/fraction of rows to subsample in each bag, can make this much faster. Defaults to 1_000_000.
         max_sec: each bag will fit for no more than ``max_sec / n_bags``
     """
@@ -289,11 +295,11 @@ class GreedyWeightedEnsembleClassifier(ClassifierMixin, _BaseGreedyWeightedEnsem
     def __init__(
         self,
         scoring,
-        n_bags: int = 20,
-        p: int | float = 0.5,
-        n_init: int | float | None = 5,
+        n_bags: int = 1,
+        p: int | float = 1.0,
+        n_init: int | float | None = 1,
         max_iter: int = 1_000,
-        max_no_improvement: int = 3,
+        max_no_improvement: int = 4,
         subsample: int | float | None = 1_000_000,
         max_sec: float | None = None,
         random_state=0,
@@ -328,11 +334,11 @@ class GreedyWeightedEnsembleRegressor(RegressorMixin, _BaseGreedyWeightedEnsembl
 
     Args:
         scoring: scoring method
-        n_bags: number of bags. Defaults to 20.
-        p: number/fraction of models in each bag. Defaults to 0.5.
-        n_init: number/fraction of best-performing models to initialize each bag with. Defaults to 5.
+        n_bags: number of bags. Defaults to 1.
+        p: number/fraction of models in each bag. Defaults to 1.0.
+        n_init: number/fraction of best-performing models to initialize each bag with. Defaults to 1.
         max_iter: maximum number of iterations per bag. Defaults to 1_000.
-        max_no_improvement: maximum number of hill-climbing without improvement. Defaults to 3.
+        max_no_improvement: maximum number of hill-climbing without improvement. Defaults to 4.
         subsample: number/fraction of rows to subsample in each bag, can make this much faster. Defaults to 1_000_000.
         max_sec: each bag will fit for no more than ``max_sec / n_bags``
     """
@@ -341,11 +347,11 @@ class GreedyWeightedEnsembleRegressor(RegressorMixin, _BaseGreedyWeightedEnsembl
     def __init__(
         self,
         scoring,
-        n_bags: int = 20,
-        p: int | float = 0.5,
-        n_init: int | float | None = 5,
+        n_bags: int = 1,
+        p: int | float = 1.0,
+        n_init: int | float | None = 1,
         max_iter: int = 1_000,
-        max_no_improvement: int = 3,
+        max_no_improvement: int = 4,
         subsample: int | float | None = 1_000_000,
         max_sec: float | None = None,
         random_state=0,
@@ -357,3 +363,45 @@ class GreedyWeightedEnsembleRegressor(RegressorMixin, _BaseGreedyWeightedEnsembl
 
     def predict(self, X):
         return self._predict_raw(X)
+
+class GreedyWeightedEnsembleSelector(TransformerMixin, _BaseGreedyWeightedEnsemble):
+    """Implements https://www.cs.cornell.edu/~alexn/papers/shotgun.icml04.revised.rev2.pdf for selecting estimators.
+
+    Can only be used with ``TabularFitter``.
+
+    Note: this may go on until ``max_iter`` when total number of models is too low, or n_init is too high,
+        or there is a single model with significantly better scores than all other models. This is because
+        optimal weights are (1, 0, 0, ...); and if it is initialized to more than 1 top model, it will keep
+        picking the best model until max_iter is reached, trying to bring weights closer to optimal.
+        If that happens, set ``n_init`` to 1.
+
+    Args:
+        scoring: scoring method
+        n_bags: number of bags. Defaults to 1.
+        p: number/fraction of models in each bag. Defaults to 1.0.
+        n_init: number/fraction of best-performing models to initialize each bag with. Defaults to 1.
+        max_iter: maximum number of iterations per bag. Defaults to 1_000.
+        max_no_improvement: maximum number of hill-climbing without improvement. Defaults to 4.
+        subsample: number/fraction of rows to subsample in each bag, can make this much faster. Defaults to 1_000_000.
+        max_sec: each bag will fit for no more than ``max_sec / n_bags``
+    """
+    is_classification = False
+
+    def __init__(
+        self,
+        scoring,
+        n_bags: int = 1,
+        p: int | float = 1.0,
+        n_init: int | float | None = 1,
+        max_iter: int = 1_000,
+        max_no_improvement: int = 4,
+        subsample: int | float | None = 1_000_000,
+        max_sec: float | None = None,
+        random_state=0,
+        verbose: int = 0
+    ):
+        kwargs = locals().copy()
+        del kwargs["self"], kwargs["__class__"]
+        super().__init__(**kwargs)
+
+    # inherits transform
