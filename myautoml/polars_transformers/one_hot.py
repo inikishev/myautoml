@@ -1,3 +1,4 @@
+import io
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
@@ -20,7 +21,7 @@ def _one_hot_expr(
     propagate_nulls: bool,
     drop_first: Literal["all", "binary", "none"],
     dtype,
-):
+) -> list[bytes]:
     """Expressions that generate one-hot columns from a categorical column"""
     if (drop_first == 'all') or (drop_first == "binary" and len(categories) == 2):
         categories = categories[1:]
@@ -29,12 +30,12 @@ def _one_hot_expr(
         return [
             # In polars comparing with None always results in null
             # so whenever category is None, all cols become null
-            (pl.col(col_name).eq(cat)).cast(dtype).alias(f"{col_name}__{cat}")
+            (pl.col(col_name).eq(cat)).cast(dtype).alias(f"{col_name}__{cat}").meta.serialize()
             for cat in categories if cat is not None
         ]
 
     return [
-        pl.col(col_name).eq_missing(cat).cast(dtype).alias(f"{col_name}__{cat}")
+        pl.col(col_name).eq_missing(cat).cast(dtype).alias(f"{col_name}__{cat}").meta.serialize()
         for cat in categories
     ]
 
@@ -44,7 +45,7 @@ def _inverse_expr(
     one_hot_col_names: list[str], # list of f"{col_name}__{category}", includes dropped
     drop_first: Literal["all", "binary", "none"],
     dtype: pl.DataType,
-) -> pl.Expr:
+) -> bytes:
     """Expression to turn one-hot encoded columns for a feature back into initial column"""
 
     if (drop_first == 'all') or (drop_first == "binary" and len(categories) == 2):
@@ -59,7 +60,7 @@ def _inverse_expr(
                 .list.get(pl.concat_arr(one_hot_col_names[1:]).arr.arg_max())
             )
 
-        ).alias(col_name)
+        ).alias(col_name).meta.serialize()
 
     return (
         # List of categories
@@ -68,8 +69,13 @@ def _inverse_expr(
          # Get category with index corresponding to argmax of one-hot columns
         .list.get(pl.concat_arr(one_hot_col_names).arr.arg_max())
 
-    ).alias(col_name)
+    ).alias(col_name).meta.serialize()
 
+def _deserialize_exprs(exprs: dict[str, list[bytes]]):
+    return {name: [pl.Expr.deserialize(io.BytesIO(b)) for b in bs] for name, bs in exprs.items()}
+
+def _deserialize_inv_exprs(exprs: dict[str, bytes]):
+    return {name: pl.Expr.deserialize(io.BytesIO(b)) for name, b in exprs.items()}
 
 class OneHotEncoder(PolarsTransformer):
     """Applies one-hot encoding to each feature. Inverse transform takes argmax of one-hotted columns.
@@ -196,13 +202,13 @@ class OneHotEncoder(PolarsTransformer):
         if (self.min_frequency is not None) or (self.max_categories is not None):
             df = self.merge_infrequent_.transform(df)
 
-        return with_columns_nonstrict(df, self.exprs_).drop(self.drop_cols_, strict=False)
+        return with_columns_nonstrict(df, _deserialize_exprs(self.exprs_)).drop(self.drop_cols_, strict=False)
 
     def inverse_transform(self, df) -> pl.LazyFrame:
         df = to_lazyframe(df)
         if len(self.order_) == 0: return df
 
-        df = with_columns_nonstrict(df, self.inv_exprs_).drop(self.inv_drop_cols_, strict=False)
+        df = with_columns_nonstrict(df, _deserialize_inv_exprs(self.inv_exprs_)).drop(self.inv_drop_cols_, strict=False)
 
         columns = df.collect_schema().names()
         return df.select(inner_reorder(columns, self.order_))
