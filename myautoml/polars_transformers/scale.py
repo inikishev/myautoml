@@ -162,7 +162,7 @@ class MinMaxScaler(PolarsTransformer):
         return with_columns_nonstrict(to_lazyframe(df), self._get_exprs())
 
     def inverse_transform(self, df) -> pl.LazyFrame:
-        return with_columns_nonstrict(to_lazyframe(df), self.-_get_inv_exprs())
+        return with_columns_nonstrict(to_lazyframe(df), self._get_inv_exprs())
 
 
 class SampleNormalizer(PolarsTransformer):
