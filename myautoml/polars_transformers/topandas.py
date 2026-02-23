@@ -26,7 +26,8 @@ if TYPE_CHECKING:
 
 class ToPandas(PolarsTransformer):
     """Converts the dataframe to pandas.
-    Also optionally makes categorical columns integers with categorical dtype for lightgbm."""
+    Also optionally makes categorical columns integers with categorical dtype for LightGBM.
+    However ``int_categorical`` must be False for XGBoost, otherwise it will cause a weird exception."""
     def __init__(
         self,
         int_categorical: bool = False,

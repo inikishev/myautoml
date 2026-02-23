@@ -156,10 +156,10 @@ class _BaseDFLinear(BaseEstimator):
 
         methods = self.methods
         if methods is None:
-            if params.size < 8: methods = ["bfgs", "cobyqa", "cobyla", "powell", "nelder-mead"]
-            elif params.size < 16: methods = ["cobyqa", "cobyla", "powell", "nelder-mead"]
-            elif params.size < 64: methods = ["cobyqa", "cobyla", "powell"]
-            elif params.size < 256: methods = ["cobyla", "powell"]
+            if params.size <= 8: methods = ["bfgs", "cobyqa", "cobyla", "powell", "nelder-mead"]
+            elif params.size <= 16: methods = ["cobyqa", "cobyla", "powell", "nelder-mead"]
+            elif params.size <= 64: methods = ["cobyqa", "cobyla", "powell"]
+            elif params.size <= 256: methods = ["cobyla", "powell"]
             else: methods = ["powell"]
 
         self.eval_count_ = 0
@@ -168,7 +168,7 @@ class _BaseDFLinear(BaseEstimator):
             if method.lower() in ("cobyla", "cobyqa", "powell", "nelder-mead"): jac = None
 
             with torch.inference_mode():
-                self.res_ = scipy.optimize.minimize(
+                res = scipy.optimize.minimize(
                     objective,
                     x0=params,
                     method=method,
@@ -176,9 +176,9 @@ class _BaseDFLinear(BaseEstimator):
                 )
 
             if self.verbose:
-                print(method, self.res_)
+                print(method, res)
 
-            params = self.res_.x
+            params = res.x
 
         self.W_ = params[:(n_features * n_targets)].reshape(n_features, n_targets)
         self.b_ = params[(n_features * n_targets):].reshape(n_targets)
