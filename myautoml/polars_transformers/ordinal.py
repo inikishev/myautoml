@@ -66,11 +66,11 @@ class OrdinalEncoder(PolarsTransformer):
 
     def transform(self, df) -> pl.LazyFrame:
         kw = {"default": None} if self.allow_unknown else {}
-        exprs_ = {
+        exprs = {
             col_name: pl.col(col_name).replace_strict(map, return_dtype=self.dtype, **kw)
             for col_name, map in self.maps_.items()
         }
-        return with_columns_nonstrict(to_lazyframe(df), exprs_)
+        return with_columns_nonstrict(to_lazyframe(df), exprs)
 
     def inverse_transform(self, df) -> pl.LazyFrame:
         inv_exprs = {col_name:
