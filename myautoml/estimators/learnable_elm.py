@@ -77,7 +77,7 @@ class _BaseLearnableELM(BaseEstimator):
         else:
             y_float = y_torch
         y_float = y_float.float()
-        assert y_float.ndim == 2 and y_float.shape[-1] == len(self.classes_), y_torch.shape
+        assert y_float.ndim == 2 and y_float.shape[-1] == n_targets, y_torch.shape
 
         X_num, X_cat = self.embeddings_.get_inputs(X)
         self.linear_ = nn.Linear(self.embeddings_.out_channels_, self.hidden_dim).to(device=self.device)

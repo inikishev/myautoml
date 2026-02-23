@@ -228,8 +228,11 @@ class DFLinearClassifier(ClassifierMixin, _BaseDFLinear):
         l2: L2 regularization. Defaults to 0.
         methods: sequence of strings - scipy.optimize.minimize methods. Each method continues from solution found
             by previous method. By default picks methods based on number of parameters. Defaults to None.
-        jac: how to compute jacobian, 2-point or 3-point. Defaults to '3-point'.
-        device: device for matrix multiplication, set to "cpu" for small datasets. Defaults to CUDA_IF_AVAILABLE.
+        jac: finite difference formula fot approximating jacobian for gradient-based solvers,
+            2-point or 3-point. Defaults to '3-point'.
+        device: device for matrix multiplication, set to "cpu" for small datasets. The solvers run on CPU
+            and move parameters to CUDA each step, which has some overhead but still considerably faster
+            when dataset has many samples. Defaults to CUDA_IF_AVAILABLE.
         dtype: dtype. Defaults to torch.float32.
         random_state: seed. Defaults to 0.
         verbose: whether to print optimization results. Defaults to False.
@@ -288,8 +291,11 @@ class DFLinearRegressor(RegressorMixin, _BaseDFLinear):
         l2: L2 regularization. Defaults to 0.
         methods: sequence of strings - scipy.optimize.minimize methods. Each method continues from solution found
             by previous method. By default picks methods based on number of parameters. Defaults to None.
-        jac: how to compute jacobian, 2-point or 3-point. Defaults to '3-point'.
-        device: device for matrix multiplication, set to "cpu" for small datasets. Defaults to CUDA_IF_AVAILABLE.
+        jac: finite difference formula fot approximating jacobian for gradient-based solvers,
+            2-point or 3-point. Defaults to '3-point'.
+        device: device for matrix multiplication, set to "cpu" for small datasets. The solvers run on CPU
+            and move parameters to CUDA each step, which has some overhead but still considerably faster
+            when dataset has many samples. Defaults to CUDA_IF_AVAILABLE.
         dtype: dtype. Defaults to torch.float32.
         random_state: seed. Defaults to 0.
         verbose: whether to print optimization results. Defaults to False.
