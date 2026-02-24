@@ -687,13 +687,7 @@ class TabularFitter:
                     fold_sample_weight = set_sample_weight
                     if fold_sample_weight is not None: fold_sample_weight = fold_sample_weight[train_index]
 
-                    print(f'{estimator = }')
-                    print(f'{X_train = }')
-                    print(f'{y_train = }')
-                    print(f'{X_unlabeled = }')
-                    print(f'{fold_sample_weight = }')
                     fitted_estimator = fit_fn(estimator, X_train, y_train, X_unlabeled, fold_sample_weight)
-                    print(f'{fitted_estimator.decision_function(X_train) = }')
 
                     if fitted_estimator is None: # pyright:ignore[reportUnnecessaryComparison]
                         raise RuntimeError(f"fit_fn for {name} returned None. Make sure estimator.fit returns self.")
