@@ -37,7 +37,7 @@ class MissingIndicator(PolarsTransformer):
         return self
 
     def transform(self, df) -> pl.LazyFrame:
-        expr = pl.col(self.cols_).is_null().cast(pl.UInt8).name.suffix(self.suffix)
+        expr = pl.col(self.cols_).is_null().cast(pl.Int8).name.suffix(self.suffix)
         return to_lazyframe(df).with_columns(expr)
 
     def inverse_transform(self, df) -> pl.LazyFrame:

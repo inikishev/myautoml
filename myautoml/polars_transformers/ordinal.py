@@ -19,7 +19,7 @@ class OrdinalEncoder(PolarsTransformer):
         propagate_nulls: if True, null values remain nulls. If False, they are treated as another category.
         maintain_order: Setting this to False makes this transform non-deterministic,
             i.e. ``fit`` method will produce different orders, but can make this faster.
-        dtype: Data type of ordinally encoded columns. Defaults to pl.Uint64.
+        dtype: Data type of ordinally encoded columns. Defaults to pl.Int64.
     """
     def __init__(
         self,
@@ -28,7 +28,7 @@ class OrdinalEncoder(PolarsTransformer):
         allow_unknown: bool = False,
         propagate_nulls: bool = True,
         maintain_order: bool = True,
-        dtype: pl.DataType | type[pl.DataType] | pl.DataTypeExpr = pl.UInt64
+        dtype: pl.DataType | type[pl.DataType] | pl.DataTypeExpr = pl.Int64
     ):
         self.include = include
         self.exclude = exclude
