@@ -81,3 +81,4 @@ def is_array_or_tensor(x) -> "TypeGuard[np.ndarray | torch.Tensor]":
 def to_numpy(x):
     if hasattr(x, "detach") and hasattr(x, "numpy"): return x.numpy(force=True)
     return np.asarray(x)
+

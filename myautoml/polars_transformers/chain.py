@@ -33,3 +33,7 @@ class Chain[Return](PolarsTransformer):
                 try: df = getattr(stage, "inverse_transform")(df)
                 except (NotImplementedError, AttributeError): pass
         return df
+
+    def __repr__(self):
+        chained = ', '.join(repr(t) for t in self.stages)
+        return f"Chain({chained})"

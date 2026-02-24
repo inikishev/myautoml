@@ -101,3 +101,6 @@ class PolarsTransformer:
         est = self.to_sklearn(collect=collect).set_fitted()
         est.feature_names_in_ = self.feature_names_in_.copy()
         return FrozenEstimator(est)
+
+    def __repr__(self):
+        return self.__class__.__name__

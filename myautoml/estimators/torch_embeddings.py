@@ -25,6 +25,7 @@ class TorchEmbeddings(nn.Module):
             May be less or more if ``min_dim``, ``max_dim`` or ``max_params`` can't be satisfied.
         min_dim: minimal embedding dim (unless ``max_params`` can not be satisfied). Defaults to 2.
         max_dim: maximal embedding dim per embedding. Defaults to 1024.
+        max_dim_per_class: limits embedding dim to number of classes times this value.
         max_params: maximal number of total parameters on all embeddings. Defaults to 1_000_000.
         other: kwargs for nn embedding
 
@@ -50,6 +51,7 @@ class TorchEmbeddings(nn.Module):
         emb_dim: int,
         min_dim: int | None = 2,
         max_dim: int | None = 1024,
+        max_dim_per_class: int | None = 2,
         max_params: int | None = 1_000_000,
         max_norm: float | None = None,
         norm_type: float = 2,
@@ -60,6 +62,7 @@ class TorchEmbeddings(nn.Module):
         self.emb_dim = emb_dim
         self.min_dim = min_dim
         self.max_dim = max_dim
+        self.max_dim_per_class = max_dim_per_class
         self.max_params = max_params
         self.max_norm = max_norm
         self.norm_type = norm_type
@@ -90,10 +93,17 @@ class TorchEmbeddings(nn.Module):
         total_num = sum(col_to_num.values())
         ratio = self.emb_dim / total_num
 
-        emb_dims = {
-            col: _clip(math.ceil(num * ratio), self.min_dim, self.max_dim)
-            for col, num in col_to_num.items()
-        }
+        def get_emb_dim(num):
+            max_dim = self.max_dim
+
+            if self.max_dim_per_class is not None:
+                if max_dim is None: max_dim = self.max_dim_per_class * num
+                else: max_dim = min(max_dim, self.max_dim_per_class * num)
+
+            return _clip(math.ceil(num * ratio), self.min_dim, max_dim)
+
+        emb_dims = {col: get_emb_dim(num) for col, num in col_to_num.items()}
+
         if (self.max_params is not None) and (sum(emb_dims.values()) > self.max_params):
             ratio = sum(emb_dims.values()) / self.max_params
             emb_dims = {col: math.ceil(dim * ratio) for col, dim in emb_dims.items()}

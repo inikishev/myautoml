@@ -58,6 +58,7 @@ class _BaseLearnableELM(BaseEstimator):
                 if criterion is None: criterion = F.cross_entropy
             else:
                 n_targets = 1
+                y = y[:, np.newaxis]
                 if criterion is None: criterion = F.binary_cross_entropy_with_logits
 
         else:
@@ -71,12 +72,9 @@ class _BaseLearnableELM(BaseEstimator):
         self.embeddings_ = TorchEmbeddings(**emb_config).to(device=self.device).fit(X)
 
         y_loss = torch.tensor(y, device=self.device)
-        if self.is_classification:
-            if n_targets > 2:
+        if self.is_classification and n_targets > 2:
                 y_lstsq = F.one_hot(y_loss, len(self.classes_)).float() # pylint:disable=not-callable
                 # y_loss remains long
-            else:
-                y_lstsq = y_loss = y_loss.unsqueeze(-1).float()
         else:
             y_lstsq = y_loss = y_loss.float()
 
@@ -159,6 +157,9 @@ class _BaseLearnableELM(BaseEstimator):
 class LearnableELMClassifier(ClassifierMixin, _BaseLearnableELM):
     """Extreme learning machine with learnable first layer. Second layer weight is computed via least squares.
 
+    Warning:
+        Should only be used with datasets with small number of samples because memory usage scales quickly.
+
     Args:
         criterion: criterion, None to use F.cross_entropy or F.binary_cross_entropy_with_logits. Defaults to None.
         act_cls: nonlinearity between first and second layers. Defaults to nn.ELU.
@@ -201,6 +202,9 @@ class LearnableELMClassifier(ClassifierMixin, _BaseLearnableELM):
 
 class LearnableELMRegressor(RegressorMixin, _BaseLearnableELM):
     """Extreme learning machine with learnable first layer. Second layer weight is computed via least squares.
+
+    Warning:
+        Should only be used with datasets with small number of samples because memory usage scales quickly.
 
     Args:
         criterion: criterion. Defaults to F.mse_loss.

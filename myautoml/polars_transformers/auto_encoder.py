@@ -276,3 +276,5 @@ class AutoEncoder:
         est.feature_names_in_ = feature_names_in
         return cast(_AutoEncoderWrapper, FrozenEstimator(est))
 
+    def __repr__(self):
+        return self.__class__.__name__

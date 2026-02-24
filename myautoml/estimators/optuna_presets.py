@@ -5,9 +5,9 @@ if TYPE_CHECKING:
 
 def suggest_xgb_params(
     trial: "optuna.Trial",
-    search_space_size: Literal[1,2] = 1
+    search_space_size: Literal[1,2,3] = 1
 ):
-    """Also use ``{"tree_method": "hist", "device": "cuda", "seed": 0}``"""
+    """Also use ``tree_method="hist", device="cuda", seed=0}``"""
 
     params = {
         "eta": trial.suggest_float("eta", 1e-4, 1.0, log=True), # Step size shrinkage, default 0.3 [0,1]

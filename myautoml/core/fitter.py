@@ -80,6 +80,11 @@ class TabularFitter:
 
         atexit.register(self._delete_temp_dir)
 
+    def set_logging_level(self, level):
+        for handler in self.logger.handlers:
+            if isinstance(handler, logging.StreamHandler):
+                handler.setLevel(level)
+
     def _delete_temp_dir(self):
         """runs at exit to make sure temp files are deleted"""
         if hasattr(self, 'root'):
@@ -1250,7 +1255,7 @@ class TabularFitter:
 
     def preview_stacked(
         self,
-        inputs: str | None | Sequence[str | None] | Sequence[tuple[str | None, str | None]],
+        inputs: str | None | Sequence[str | None] | Sequence[tuple[str | None, str | None]] = None,
         set_i: int = 0,
     ) -> pl.DataFrame:
         """Compute a stacked dataframe to preview what it looks like.
