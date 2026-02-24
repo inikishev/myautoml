@@ -1,12 +1,14 @@
 from typing import TYPE_CHECKING, Literal
 from collections.abc import Callable
 from functools import partial
+import scipy.optimize
 
 import numpy as np
 import polars as pl
 import torch
 from torch.nn import functional as F
 from sklearn.base import BaseEstimator, ClassifierMixin, RegressorMixin
+from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.utils import check_random_state
 from sklearn.utils.validation import (
     check_is_fitted,
@@ -18,6 +20,17 @@ from ..utils import torch_utils
 
 CUDA_IF_AVAILABLE = 'cuda' if torch.cuda.is_available() else "cpu"
 
+
+def _get_init_from_logreg(X, y, random_state):
+    logreg = LogisticRegression(random_state=random_state).fit(X, y)
+    # coef_ is ndarray of shape (1, n_features) or (n_classes, n_features)
+    return logreg.coef_.T, logreg.intercept_
+
+def _get_init_from_ridge(X, y, random_state):
+    ridge = Ridge(random_state=random_state).fit(X, y)
+    return ridge.coef_.T, ridge.intercept_
+
+
 class _BaseDFLinear(BaseEstimator):
     is_classification: bool
 
@@ -27,6 +40,7 @@ class _BaseDFLinear(BaseEstimator):
         activation: Callable[[torch.Tensor], torch.Tensor] | None | Literal["auto"],
         l1: float,
         l2: float,
+        lr_init: bool,
         methods,
         jac: Literal["2-point", "3-point"],
         device,
@@ -40,6 +54,7 @@ class _BaseDFLinear(BaseEstimator):
         self.l2 = l2
         self.methods = methods
         self.jac = jac
+        self.lr_init = lr_init
         self.device = device
         self.dtype = dtype
         self.random_state = random_state
@@ -148,9 +163,17 @@ class _BaseDFLinear(BaseEstimator):
 
             return error
 
-        import scipy.optimize
-        W_init = torch.as_tensor(rng.standard_normal((n_features, n_targets)), device=self.device, dtype=self.dtype) * 0.5
-        b_init = torch.zeros(n_targets, device=self.device, dtype=self.dtype)
+        if self.lr_init:
+            if self.is_classification: W_init, b_init = _get_init_from_logreg(X, y, self.random_state)
+            else: W_init, b_init = _get_init_from_ridge(X, y, self.random_state)
+            W_init = torch.as_tensor(W_init, device=self.device, dtype=self.dtype)
+            b_init = torch.as_tensor(b_init, device=self.device, dtype=self.dtype)
+
+        else:
+            randn = rng.standard_normal((n_features, n_targets))
+            W_init = torch.as_tensor(randn, device=self.device, dtype=self.dtype) * 0.5
+            b_init = torch.zeros(n_targets, device=self.device, dtype=self.dtype)
+
         params = torch.cat([W_init.ravel(), b_init.ravel()]).numpy(force=True)
         del W_init, b_init
 
@@ -226,6 +249,7 @@ class DFLinearClassifier(ClassifierMixin, _BaseDFLinear):
             "auto" for sigmoid or softmax depending on number of classes.
         l1: L1 regularization. Defaults to 0.
         l2: L2 regularization. Defaults to 0.
+        lr_init: If True, initializes weights to fitted LogisticRegression, if False, initializes randomly.
         methods: sequence of strings - scipy.optimize.minimize methods. Each method continues from solution found
             by previous method. By default picks methods based on number of parameters. Defaults to None.
         jac: finite difference formula fot approximating jacobian for gradient-based solvers,
@@ -246,6 +270,7 @@ class DFLinearClassifier(ClassifierMixin, _BaseDFLinear):
         activation: Callable[[torch.Tensor], torch.Tensor] | None | Literal["auto"] = "auto",
         l1: float = 0,
         l2: float = 0,
+        lr_init: bool = True,
         methods = None,
         jac: Literal["2-point", "3-point"] = "3-point",
         device=CUDA_IF_AVAILABLE,
@@ -289,6 +314,7 @@ class DFLinearRegressor(RegressorMixin, _BaseDFLinear):
         activation: final activation function to apply to outputs before computing the loss.
         l1: L1 regularization. Defaults to 0.
         l2: L2 regularization. Defaults to 0.
+        lr_init: If True, initializes weights to fitted Ridge, if False, initializes randomly.
         methods: sequence of strings - scipy.optimize.minimize methods. Each method continues from solution found
             by previous method. By default picks methods based on number of parameters. Defaults to None.
         jac: finite difference formula fot approximating jacobian for gradient-based solvers,
@@ -309,6 +335,7 @@ class DFLinearRegressor(RegressorMixin, _BaseDFLinear):
         activation: Callable[[torch.Tensor], torch.Tensor] | None = None,
         l1: float = 0,
         l2: float = 0,
+        lr_init: bool = True,
         methods = None,
         jac: Literal["2-point", "3-point"] = "3-point",
         device=CUDA_IF_AVAILABLE,

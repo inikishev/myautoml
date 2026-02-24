@@ -101,7 +101,8 @@ class _BaseHillClimbingEnsemble(BaseEstimator):
                 def objective(x: float):
                     x = barrier_fn(x)
                     new_preds[:] = (bag_sum + estimator_preds * x) / (weights_sum + x)
-                    error = compute_error(new_preds)
+                    if self.is_classification and new_preds.min() < 0: error = max(-x, 1) * 1e5
+                    else: error = compute_error(new_preds)
                     if self.verbose >= 2: print(f"{bag_iter} {estimator} {x}: {error=:.8f}, {lowest_error=:.8f}")
                     return error
 
@@ -166,7 +167,7 @@ class HillClimbingEnsembleClassifier(ClassifierMixin, _BaseHillClimbingEnsemble)
     def __init__(
         self,
         scoring,
-        search_iters: int = 16,
+        search_iters: int = 32,
         bracket = (-0.3, 1.5),
         bag_iters: int = 1,
         min_magnitude: float = 0.001,
