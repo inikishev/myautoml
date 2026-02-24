@@ -60,6 +60,7 @@ class _BaseDFLinear(BaseEstimator):
         self.random_state = random_state
         self.verbose = verbose
 
+    @torch.inference_mode()
     def fit(self, X, y):
 
         X, y = validate_data(self, X=X, y=y)
@@ -220,6 +221,7 @@ class _BaseDFLinear(BaseEstimator):
 
         return self
 
+    @torch.inference_mode()
     def decision_function(self, X):
         check_is_fitted(self)
         X = validate_data(self, X=X, reset=False)

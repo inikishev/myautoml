@@ -562,6 +562,8 @@ class SavedEstimator:
         else:
             df = polars_utils.to_dataframe(output)
 
+        del output
+
         if is_categorical is None:
             is_categorical = (
                             df.width == 1 and

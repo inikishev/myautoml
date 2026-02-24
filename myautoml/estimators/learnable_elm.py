@@ -29,8 +29,9 @@ class _BaseLearnableELM(BaseEstimator):
         hidden_dim: int,
         emb_dim: int,
         emb_config: dict | None,
-        rprop_iters,
-        lbfgs_iters,
+        rprop_iters: int,
+        lbfgs_iters: int,
+        n_resets: int,
         device,
         verbose: int
     ):
@@ -42,6 +43,7 @@ class _BaseLearnableELM(BaseEstimator):
         self.act_cls = act_cls
         self.rprop_iters = rprop_iters
         self.lbfgs_iters = lbfgs_iters
+        self.n_resets = n_resets
         self.verbose = verbose
 
     def fit(self, X, y):
@@ -104,25 +106,26 @@ class _BaseLearnableELM(BaseEstimator):
         self.train()
         params = [*self.embeddings_.parameters(), *self.linear_.parameters(), *self.act_.parameters()]
 
-        optimizer = torch.optim.Rprop(params)
-        n_no_improvement = 0
-        best_loss = float('inf')
+        for _ in range(self.n_resets):
+            optimizer = torch.optim.Rprop(params)
+            n_no_improvement = 0
+            best_loss = float('inf')
 
-        for _ in range(self.rprop_iters):
-            loss = optimizer.step(closure)
-            assert isinstance(loss, torch.Tensor)
+            for _ in range(self.rprop_iters):
+                loss = optimizer.step(closure)
+                assert isinstance(loss, torch.Tensor)
 
-            if loss < best_loss:
-                best_loss = loss.detach().cpu()
-                n_no_improvement = 0
-            else:
-                n_no_improvement += 1
+                if loss < best_loss:
+                    best_loss = loss.detach().cpu()
+                    n_no_improvement = 0
+                else:
+                    n_no_improvement += 1
 
-            if n_no_improvement > 10:
-                break
+                if n_no_improvement > 10:
+                    break
 
-        optimizer = torch.optim.LBFGS(params, max_iter=self.lbfgs_iters, line_search_fn='strong_wolfe')
-        optimizer.step(closure)
+            optimizer = torch.optim.LBFGS(params, max_iter=self.lbfgs_iters, line_search_fn='strong_wolfe')
+            optimizer.step(closure)
 
         return self
 
@@ -141,6 +144,7 @@ class _BaseLearnableELM(BaseEstimator):
         self.linear_.eval()
         self.act_.eval()
 
+    @torch.inference_mode()
     def _predict_raw(self, X):
         check_is_fitted(self)
         validate_data(self, X=X, reset=False)
@@ -166,8 +170,9 @@ class LearnableELMClassifier(ClassifierMixin, _BaseLearnableELM):
         hidden_dim: hidden dim. Defaults to 512.
         emb_dim: output dimension of embeddings, only has effect when categorical features are present. Defaults to 256.
         emb_config: keyword arguments for embedding. Defaults to None.
-        rprop_iters: number of RProp iterations before LBFGS. Defaults to 1000.
-        lbfgs_iters: number of LBFGS iterations. Defaults to 1000.
+        rprop_iters: number of RProp iterations before LBFGS per loop. Defaults to 1000.
+        lbfgs_iters: number of LBFGS iterations per loop. Defaults to 1000.
+        n_resets: number of optimization loops. Defaults to 2.
         device: device. Defaults to CUDA_IF_AVAILABLE.
     """
     is_classification: bool = True
@@ -181,6 +186,7 @@ class LearnableELMClassifier(ClassifierMixin, _BaseLearnableELM):
         emb_config: dict | None = None,
         rprop_iters = 1000,
         lbfgs_iters = 1000,
+        n_resets = 2,
         device = CUDA_IF_AVAILABLE,
         verbose: int = 0,
     ):
@@ -212,8 +218,9 @@ class LearnableELMRegressor(RegressorMixin, _BaseLearnableELM):
         hidden_dim: hidden dim. Defaults to 512.
         emb_dim: output dimension of embeddings, only has effect when categorical features are present. Defaults to 256.
         emb_config: keyword arguments for embedding. Defaults to None.
-        rprop_iters: number of RProp iterations before LBFGS. Defaults to 1000.
-        lbfgs_iters: number of LBFGS iterations. Defaults to 1000.
+        rprop_iters: number of RProp iterations before LBFGS per loop. Defaults to 1000.
+        lbfgs_iters: number of LBFGS iterations per loop. Defaults to 1000.
+        n_resets: number of optimization loops. Defaults to 2.
         device: device. Defaults to CUDA_IF_AVAILABLE.
     """
 
@@ -228,6 +235,7 @@ class LearnableELMRegressor(RegressorMixin, _BaseLearnableELM):
         emb_config: dict | None = None,
         rprop_iters=1000,
         lbfgs_iters=1000,
+        n_resets = 2,
         device=CUDA_IF_AVAILABLE,
         verbose: int = 0,
     ):

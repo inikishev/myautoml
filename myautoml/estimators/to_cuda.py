@@ -19,7 +19,7 @@ class ToCUDA(TransformerMixin, BaseEstimator):
         self.dtype = dtype
 
     def fit(self, X, y=None):
-        X, y = validate_data(self, X=X, y=y, ensure_all_finite=False)
+        validate_data(self, X=X, y=y, ensure_all_finite=False)
         self.fitted_ = True
         return self
 

@@ -21,4 +21,4 @@ if TYPE_CHECKING or find_spec("torch") is not None:
     from .df_linear import DFLinearClassifier, DFLinearRegressor
     from .learnable_elm import LearnableELMClassifier, LearnableELMRegressor
     from .to_cuda import ToCUDA
-
+    from .mimic import DiagMimic, IterativeMimic, EighMimic
