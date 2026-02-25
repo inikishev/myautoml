@@ -107,7 +107,7 @@ class _BaseLearnableELM(BaseEstimator):
         params = [*self.embeddings_.parameters(), *self.linear_.parameters(), *self.act_.parameters()]
 
         for _ in range(self.n_resets):
-            optimizer = torch.optim.Rprop(params)
+            optimizer = torch.optim.Rprop(params, 1e-4)
             n_no_improvement = 0
             best_loss = float('inf')
 

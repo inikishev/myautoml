@@ -5,37 +5,45 @@ if TYPE_CHECKING:
 
 def suggest_xgb_params(
     trial: "optuna.Trial",
-    search_space_size: Literal[1,2,3] = 1
 ):
     """Also use ``tree_method="hist", device="cuda", seed=0}``"""
 
+
+    # Hyperparameter search space
     params = {
-        "eta": trial.suggest_float("eta", 1e-4, 1.0, log=True), # Step size shrinkage, default 0.3 [0,1]
-        "gamma": trial.suggest_float("gamma", 1e-3, 1e3, log=True) - 1e-3, # Minimum loss reduction, default 0 [0,∞]
-        "max_depth": trial.suggest_int("max_depth", 1, 16), # default=6  [0,∞]
-        "min_child_weight": trial.suggest_float("min_child_weight", 1e-2, 100, log=True) - 1e-2, # default=1 [0,∞]
-        "subsample": trial.suggest_float("subsample", 1e-2, 1.0), # default=1 (0,1]
-        "colsample_bytree":  trial.suggest_float("colsample_bytree", 1e-2, 1.0), # default=1 (0, 1]
+        # Tree structure parameters
+        "max_depth": trial.suggest_int("max_depth", 3, 12),
+        "min_child_weight": trial.suggest_float("min_child_weight", 0.1, 10, log=True),
+        "max_leaves": trial.suggest_int("max_leaves", 0, 256),
+        "grow_policy": trial.suggest_categorical("grow_policy", ["depthwise", "lossguide"]),
+
+        # Learning parameters
+        "learning_rate": trial.suggest_float("learning_rate", 1e-4, 0.3, log=True),
+        "gamma": trial.suggest_float("gamma", 1e-8, 10, log=True),
+
+        # Regularization parameters
+        "reg_alpha": trial.suggest_float("reg_alpha", 1e-8, 100, log=True),
+        "reg_lambda": trial.suggest_float("reg_lambda", 1e-8, 100, log=True),
+
+        # Subsampling parameters
+        "subsample": trial.suggest_float("subsample", 0.5, 1.0),
+        "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
+        "colsample_bylevel": trial.suggest_float("colsample_bylevel", 0.5, 1.0),
+
+        # Other parameters
+        "scale_pos_weight": trial.suggest_float("scale_pos_weight", 1, 10),
     }
 
-    if search_space_size >= 2:
-        params.update({
-            "max_delta_step": trial.suggest_float("max_delta_step", 0, 10), # default=0 [0,∞]
-            "sampling_method": trial.suggest_categorical("sampling_method", ["uniform", "gradient_based"]),
-            "lambda": trial.suggest_float("lambda", 1e-8, 1000, log=True) - 1e-8, # L2 regularization default=1
-            "alpha": trial.suggest_float("alpha", 1e-8, 1000, log=True) - 1e-8, # L1 regularization default=0
-            "max_leaves": trial.suggest_categorical("max_leaves", [0, 64, 128, 256]), # default=0
-            "grow_policy": trial.suggest_categorical("grow_policy", ["depthwise", "lossguide"]),
-            "colsample_bylevel": trial.suggest_float("colsample_bylevel", 1e-2, 1.0),
-        })
-
-    if search_space_size >= 3:
-        params.update({
-            "scale_pos_weight": trial.suggest_float("scale_pos_weight", 0.1, 10, log=True),
-            "n_estimators": trial.suggest_int("n_estimators", 1, 2000)
-        })
-
-    elif params["eta"] < 0.1:
-        params["n_estimators"] = 2000
-
-    return params
+    # XGBoost training parameters with CUDA
+    return {
+        **params,
+        "objective": "binary:logistic",
+        "eval_metric": "auc",
+        "tree_method": "hist",  # GPU-accelerated with xgboost-cu12
+        "enable_categorical": True,
+        "device": "cuda",
+        "seed": 0,
+        "verbosity": 0,
+        "num_boost_round": 1000,
+        # "early_stopping_rounds": 50,
+    }
