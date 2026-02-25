@@ -15,7 +15,7 @@ from .weighted_ensemble import (
     GreedyWeightedEnsembleSelector,
 )
 
-from .utility import ToDtype
+from .utility import ToDtype, ToPandas
 
 if TYPE_CHECKING or find_spec("torch") is not None:
     from .df_linear import DFLinearClassifier, DFLinearRegressor
