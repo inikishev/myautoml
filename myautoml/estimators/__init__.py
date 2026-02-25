@@ -8,7 +8,7 @@ from .hill_climbing import (
     HillClimbingEnsembleSelector,
 )
 from .kernel_approximation import LaplaceRFF
-from .ridge_classifier import RidgeClassifierProba, RidgeClassifierCVProba
+from .ridge_proba import RidgeClassifierProba, RidgeClassifierCVProba
 from .weighted_ensemble import (
     GreedyWeightedEnsembleClassifier,
     GreedyWeightedEnsembleRegressor,

@@ -574,6 +574,7 @@ class TabularFitter:
 
         use_unlabeled: bool,
         fit_fn: Callable[[Any, pl.DataFrame, pl.Series, pl.DataFrame | None, np.ndarray | None], Any],
+        info: Any,
     ) -> np.ndarray:
         """Fits an estimator to the dataset. See ``fit_supervised`` and ``fit_unsupervised`` for arguments."""
         if max_folds is not None:
@@ -894,6 +895,7 @@ class TabularFitter:
             "sample_weight_type": sample_weight_type,
             "sample_weight_fn": python_utils.get_qualname(sample_weight_fn) if sample_weight_fn is not None else None,
             "groups": groups,
+            "has_info": info is not None,
             "use_folds": use_folds,
             "fold_map": fold_map, # note: int keys are converted to str by json
             "n_fitted": n_fitted,
@@ -920,6 +922,12 @@ class TabularFitter:
         assert obj_repr is not None
         with open(dir / "repr.txt", "w", encoding='utf-8') as f:
             f.write(obj_repr)
+
+        if info is not None:
+            try:
+                joblib.dump(info, dir / "info.joblib", compress=3)
+            except Exception as e:
+                self.logger.error(f"Failed to save info for {name}:\n{e}")
 
         # Mark as done
         with open(dir / "done.txt", "w", encoding='utf-8') as f:
@@ -953,6 +961,7 @@ class TabularFitter:
         fit_fn: Callable[
             [Any, pl.DataFrame, pl.Series, pl.DataFrame | None, np.ndarray | None], Any
         ] = _fitter_utils.default_fit_fn,
+        info: Any = None,
     ) -> np.ndarray:
         """Fit a supervised estimator to the dataset and score it.
 
@@ -979,6 +988,8 @@ class TabularFitter:
             max_folds: merges folds if number of folds is larger than this value, for estimators that are slow to fit.
             fit_fn: Function called as ``fn(estimator, X, y, X_unlabeled)`` which should return fitted estimator.
                 Defaults to ``estimator.fit(X, y, sample_weights=sample_weights)``.
+            info: if specified, pickled and saved to estimator folder as ``info.joblib``.
+                This can be used to store hyperparameters when tuning them for later reference.
         """
 
         inputs = _fitter_utils._validate_inputs(inputs)
@@ -1002,6 +1013,7 @@ class TabularFitter:
             max_folds = max_folds,
             use_unlabeled = use_unlabeled,
             fit_fn = fit_fn,
+            info = info,
         )
 
 
@@ -1025,6 +1037,8 @@ class TabularFitter:
         fit_fn: Callable[
             [Any, pl.DataFrame, pl.Series, pl.DataFrame | None, np.ndarray | None], Any
         ] = _fitter_utils.default_fit_fn,
+        info: Any = None,
+
     ) -> None:
         """Fit an unsupervised estimator or a feature transformer to the dataset.
 
@@ -1052,6 +1066,8 @@ class TabularFitter:
                 Ignored if ``use_folds=False``.
             fit_fn: Function called as ``fn(estimator, X, y, X_unlabeled)`` which should return fitted estimator.
                 Defaults to ``estimator.fit(X, y)``.
+            info: if specified, pickled and saved to estimator folder as ``info.joblib``.
+                This can be used to store hyperparameters when tuning them for later reference.
         """
 
         inputs = _fitter_utils._validate_inputs(inputs)
@@ -1075,6 +1091,7 @@ class TabularFitter:
             max_folds = max_folds,
             use_unlabeled = use_unlabeled,
             fit_fn = fit_fn,
+            info = info,
         )
 
 
