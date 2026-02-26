@@ -1,14 +1,14 @@
+import math
 from typing import TYPE_CHECKING, Literal
 from collections.abc import Callable
 from functools import partial
-import scipy.optimize
-
+import importlib.util
 import numpy as np
 import polars as pl
 import torch
 from torch.nn import functional as F
 from sklearn.base import BaseEstimator, ClassifierMixin, RegressorMixin
-from sklearn.linear_model import LogisticRegression, Ridge
+from sklearn.linear_model import LogisticRegression, Ridge, RidgeClassifier
 from sklearn.utils import check_random_state
 from sklearn.utils.validation import (
     check_is_fitted,
@@ -16,7 +16,6 @@ from sklearn.utils.validation import (
 )
 
 from ..metrics.scoring import get_scorer
-from ..utils import torch_utils
 
 CUDA_IF_AVAILABLE = 'cuda' if torch.cuda.is_available() else "cpu"
 
@@ -30,6 +29,45 @@ def _get_init_from_ridge(X, y, random_state):
     ridge = Ridge(random_state=random_state).fit(X, y)
     return ridge.coef_.T, ridge.intercept_
 
+def _get_init_from_ridge_classifier(X, y, random_state):
+    ridge = RidgeClassifier(random_state=random_state).fit(X, y)
+    return ridge.coef_.T, ridge.intercept_
+
+def _nan_to_inf(x):
+    if not math.isfinite(x): return math.inf
+    return x
+
+def stp_minimize(objective, x):
+
+    sigma = 1e-4
+    v = objective(x)
+
+    n_no_impovement = 0
+    while True:
+        z = np.random.normal(0, sigma, size=x.shape)
+        v_plus = _nan_to_inf(objective(x + z))
+        v_minus = _nan_to_inf(objective(x - z))
+
+        if v < v_plus and v < v_minus:
+            sigma = sigma * 0.1
+            n_no_impovement += 1
+            if sigma < 1e-20: sigma = 1e4
+
+        else:
+            n_no_impovement = 0
+            sigma = sigma * 1.1
+            if v_plus < v_minus:
+                x = x + z
+                v = v_plus
+            else:
+                x = x - z
+                v = v_minus
+
+        if n_no_impovement >= 100:
+            break
+
+
+    return x
 
 class _BaseDFLinear(BaseEstimator):
     is_classification: bool
@@ -40,7 +78,7 @@ class _BaseDFLinear(BaseEstimator):
         activation: Callable[[torch.Tensor], torch.Tensor] | None | Literal["auto"],
         l1: float,
         l2: float,
-        lr_init: bool,
+        init: Literal["logreg", "ridge", "random"],
         methods,
         jac: Literal["2-point", "3-point"],
         device,
@@ -54,7 +92,7 @@ class _BaseDFLinear(BaseEstimator):
         self.l2 = l2
         self.methods = methods
         self.jac = jac
-        self.lr_init = lr_init
+        self.init = init
         self.device = device
         self.dtype = dtype
         self.random_state = random_state
@@ -79,6 +117,24 @@ class _BaseDFLinear(BaseEstimator):
         else:
             if y.ndim == 1: y = y[:, np.newaxis]
             n_targets = y.shape[1]
+
+        # -------------------------------- initialize -------------------------------- #
+        if self.init == "random":
+            randn = rng.standard_normal((n_features, n_targets))
+            W_init = torch.as_tensor(randn, device=self.device, dtype=self.dtype) * 0.5
+            b_init = torch.zeros(n_targets, device=self.device, dtype=self.dtype)
+
+        else:
+            if self.init == "ridge":
+                if self.is_classification: W_init, b_init = _get_init_from_ridge_classifier(X, y, self.random_state)
+                else: W_init, b_init = _get_init_from_ridge(X, np.squeeze(y), self.random_state)
+            else:
+                assert self.init == "logreg"
+                assert self.is_classification
+                W_init, b_init = _get_init_from_logreg(X, y, self.random_state)
+
+            W_init = torch.as_tensor(W_init, device=self.device, dtype=self.dtype)
+            b_init = torch.as_tensor(b_init, device=self.device, dtype=self.dtype)
 
         assert torch is not None
         X = torch.as_tensor(X, device=self.device, dtype=self.dtype)
@@ -112,7 +168,10 @@ class _BaseDFLinear(BaseEstimator):
 
         self.activation_ = activation
 
-        def objective(x: np.ndarray):
+        self.eval_count_ = 0
+        def objective(x: np.ndarray, grad=None):
+            if grad is not None: # grad is needed for nlopt but not used
+                assert grad.size == 0
             # -
             # if not hasattr(objective, 'call_count'):
             #     objective.call_count = 0
@@ -162,36 +221,46 @@ class _BaseDFLinear(BaseEstimator):
             if self.l1 > 0: error = error + np.abs(x).sum() * self.l1
             if self.l2 > 0: error = error + (x ** 2).sum() * self.l2
 
+            self.eval_count_ += 1
+            if self.verbose >= 2: print(f'{self.eval_count_} {error = }')
             return error
-
-        if self.lr_init:
-            if self.is_classification: W_init, b_init = _get_init_from_logreg(X, y, self.random_state)
-            else: W_init, b_init = _get_init_from_ridge(X, y, self.random_state)
-            W_init = torch.as_tensor(W_init, device=self.device, dtype=self.dtype)
-            b_init = torch.as_tensor(b_init, device=self.device, dtype=self.dtype)
-
-        else:
-            randn = rng.standard_normal((n_features, n_targets))
-            W_init = torch.as_tensor(randn, device=self.device, dtype=self.dtype) * 0.5
-            b_init = torch.zeros(n_targets, device=self.device, dtype=self.dtype)
 
         params = torch.cat([W_init.ravel(), b_init.ravel()]).numpy(force=True)
         del W_init, b_init
 
         methods = self.methods
         if methods is None:
-            if params.size < 8: methods = ["bfgs", "cobyqa", "cobyla", "powell", "nelder-mead"]
-            elif params.size < 16: methods = ["cobyqa", "cobyla", "powell", "nelder-mead"]
-            elif params.size < 64: methods = ["cobyqa", "cobyla", "powell"]
-            elif params.size < 256: methods = ["cobyla", "powell"]
-            else: methods = ["powell"]
+            if params.size < 8: methods = ["bfgs", "cobyqa", "cobyla", "stp", "powell"]
+            elif params.size < 64: methods = ["cobyqa", "cobyla", "stp", "powell"]
+            elif params.size < 256: methods = ["cobyla", "stp", "powell"]
+            elif params.size < 512: methods = ["stp", "powell"]
+            else: methods = ["stp"]
 
-        self.eval_count_ = 0
+            if importlib.util.find_spec("nlopt") is not None:
+                if params.size < 512: methods.append("sbplx")
+            else:
+                if params.size < 16: methods.append("nelder-mead")
+
+
         for method in methods:
-            jac = self.jac
-            if method.lower() in ("cobyla", "cobyqa", "powell", "nelder-mead"): jac = None
 
-            with torch.inference_mode():
+            if method == "sbplx":
+                import nlopt
+                opt = nlopt.opt(nlopt.LN_SBPLX, params.size)
+                opt.set_min_objective(objective)
+                params = opt.optimize(params)
+
+
+            elif method == "stp":
+                params = stp_minimize(objective, params)
+
+
+            else:
+                import scipy.optimize
+
+                jac = self.jac
+                if method.lower() in ("cobyla", "cobyqa", "powell", "nelder-mead"): jac = None
+
                 res = scipy.optimize.minimize(
                     objective,
                     x0=params,
@@ -199,10 +268,9 @@ class _BaseDFLinear(BaseEstimator):
                     jac=jac,
                 )
 
-            if self.verbose:
-                print(method, res)
+                params = res.x
 
-            params = res.x
+            if self.verbose >= 1: print(f'{self.eval_count_} {method} error={objective(params)}')
 
         self.W_ = params[:(n_features * n_targets)].reshape(n_features, n_targets)
         self.b_ = params[(n_features * n_targets):].reshape(n_targets)
@@ -234,8 +302,7 @@ class _BaseDFLinear(BaseEstimator):
 
 class DFLinearClassifier(ClassifierMixin, _BaseDFLinear):
     """Fit a linear model to optimize a score such as accuracy or ROC AUC directly using gradient-free optimization.
-    This is considerably slower than LogisticRegression and only recommended when ``n_features * n_classes < 16``
-    (for binary classification ``n_features < 16``).
+    This is considerably slower to optimize than LogisticRegression and scales quickly with ``n_features * n_classes``.
 
     Note:
         Some metrics, like accuracy, are highly discontinuous when the dataset is very small, which can cause
@@ -251,9 +318,16 @@ class DFLinearClassifier(ClassifierMixin, _BaseDFLinear):
             "auto" for sigmoid or softmax depending on number of classes.
         l1: L1 regularization. Defaults to 0.
         l2: L2 regularization. Defaults to 0.
-        lr_init: If True, initializes weights to fitted LogisticRegression, if False, initializes randomly.
-        methods: sequence of strings - scipy.optimize.minimize methods. Each method continues from solution found
-            by previous method. By default picks methods based on number of parameters. Defaults to None.
+        init: how to initialize weights:
+            - "logreg" - fit LogisticRegression and use it's fitted coefficients (default).
+            - "ridge" - fit RidgeClassifier and use it's fitted coefficients.
+            - "random" - initialize randomly.
+        methods: sequence of string method names. Each method continues from solution found by previous method.
+            By default picks methods based on number of parameters. Defaults to None.
+            Available methods:
+            - all methods in ``scipy.optimize.minimize``
+            - "sbplx" - SBPLX if NLOpt is installed (usually the best solver)
+            - "stp" - three-point direct search which may be useful to get slight improvement over logreg/ridge initialization on very high dimensional models.
         jac: finite difference formula fot approximating jacobian for gradient-based solvers,
             2-point or 3-point. Defaults to '3-point'.
         device: device for matrix multiplication, set to "cpu" for small datasets. The solvers run on CPU
@@ -272,7 +346,7 @@ class DFLinearClassifier(ClassifierMixin, _BaseDFLinear):
         activation: Callable[[torch.Tensor], torch.Tensor] | None | Literal["auto"] = "auto",
         l1: float = 0,
         l2: float = 0,
-        lr_init: bool = True,
+        init: Literal["logreg", "ridge", "random"] = 'logreg',
         methods = None,
         jac: Literal["2-point", "3-point"] = "3-point",
         device=CUDA_IF_AVAILABLE,
@@ -300,8 +374,8 @@ class DFLinearClassifier(ClassifierMixin, _BaseDFLinear):
 
 
 class DFLinearRegressor(RegressorMixin, _BaseDFLinear):
-    """Fit a linear model to optimize a score directly using gradient-free optimization.
-    This is considerably slower than Ridge and only recommended when ``n_features * n_targets < 16``
+    """Fit a linear model to optimize a score such as accuracy or ROC AUC directly using gradient-free optimization.
+    This is considerably slower to optimize than LogisticRegression and scales quickly with ``n_features * n_targets``.
 
     Note:
         Some metrics, like accuracy, are highly discontinuous when the dataset is very small, which can cause
@@ -316,9 +390,15 @@ class DFLinearRegressor(RegressorMixin, _BaseDFLinear):
         activation: final activation function to apply to outputs before computing the loss.
         l1: L1 regularization. Defaults to 0.
         l2: L2 regularization. Defaults to 0.
-        lr_init: If True, initializes weights to fitted Ridge, if False, initializes randomly.
-        methods: sequence of strings - scipy.optimize.minimize methods. Each method continues from solution found
-            by previous method. By default picks methods based on number of parameters. Defaults to None.
+        init: how to initialize weights
+            - "ridge" - fit Ridge and use it's fitted coefficients.
+            - "random" - initialize randomly.
+        methods: sequence of string method names. Each method continues from solution found by previous method.
+            By default picks methods based on number of parameters. Defaults to None.
+            Available methods
+            - all methods in ``scipy.optimize.minimize``
+            - "sbplx" - SBPLX if NLOpt is installed (usually the best solver)
+            - "stp" - three-point direct search which may be useful to get slight improvement over logreg/ridge initialization on very high dimensional models.
         jac: finite difference formula fot approximating jacobian for gradient-based solvers,
             2-point or 3-point. Defaults to '3-point'.
         device: device for matrix multiplication, set to "cpu" for small datasets. The solvers run on CPU
@@ -337,7 +417,7 @@ class DFLinearRegressor(RegressorMixin, _BaseDFLinear):
         activation: Callable[[torch.Tensor], torch.Tensor] | None = None,
         l1: float = 0,
         l2: float = 0,
-        lr_init: bool = True,
+        init: Literal["ridge", "random"] = 'ridge',
         methods = None,
         jac: Literal["2-point", "3-point"] = "3-point",
         device=CUDA_IF_AVAILABLE,
