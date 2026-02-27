@@ -315,7 +315,7 @@ class _BaseBisine(BaseEstimator):
     def _get_y_tensor(self, y: np.ndarray):
         y_tensor = torch.as_tensor(y, device=self.device)
         if self.is_classification:
-            y_oh = torch.zeros(y_tensor.shape[0], len(self.classes_))
+            y_oh = torch.zeros(y_tensor.shape[0], len(self.classes_), device=y_tensor.device)
             y_oh.scatter_(1, y_tensor.long().unsqueeze(1), 1.0)
             y_tensor = y_oh
 

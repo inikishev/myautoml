@@ -242,13 +242,13 @@ def _validate_inputs(
     return _sort_inputs(validated)
 
 
-def _min_fit_sec_for_caching(X: np.ndarray | pl.DataFrame):
+def _min_fit_sec_for_caching(X: np.ndarray | pl.DataFrame, min_sec: float = 0.1, size_per_sec: int = 1_000_000):
     numel = math.prod(X.shape)
     if numel > 125_000_000: return 1e100 # return very large value avoid caching more than ~1GB
 
      # 1_000_000 elements will cache if processing them takes over 1 second (8 MB if float64)
      # saving processing times under 0.2 seconds is not beneficial
-    return max(0.2, numel / 1_000_000)
+    return max(min_sec, numel / size_per_sec)
 
 
 class CacheKey(NamedTuple):
@@ -277,7 +277,7 @@ class CachedFrame:
         self.loaded = loaded
         self.logger = logger
 
-    def load(self, max_ram_mb:float, max_disk_mb:float) -> pl.DataFrame:
+    def load(self, max_ram_mb:float, max_disk_mb:float, min_cache_sec:float, cache_size_per_sec:int) -> pl.DataFrame:
         if self.loaded is not None:
             # we use level 1 for trace
             self.logger.log(1, "Loading %r dataframe from RAM", self.loaded.shape)
@@ -292,7 +292,7 @@ class CachedFrame:
         df = self.fn()
 
         time_sec = time.perf_counter() - start
-        min_sec = _min_fit_sec_for_caching(df)
+        min_sec = _min_fit_sec_for_caching(df, min_sec=min_cache_sec, size_per_sec=cache_size_per_sec)
 
         if time_sec > min_sec:
 
@@ -438,6 +438,8 @@ class SavedEstimator:
         method: str,
         max_ram_mb: float,
         max_disk_mb: float,
+        min_cache_sec:float,
+        cache_size_per_sec:int
     ) -> np.ndarray:
         """
         Args:
@@ -459,7 +461,12 @@ class SavedEstimator:
 
             self.cached_frames[cache_file] = CachedFrame(cache_file=cache_file, fn=fn, logger=self.logger, loaded=self.loaded)
 
-        return self.cached_frames[cache_file].load(max_ram_mb=max_ram_mb, max_disk_mb=max_disk_mb).to_numpy()
+        return self.cached_frames[cache_file].load(
+            max_ram_mb=max_ram_mb,
+            max_disk_mb=max_disk_mb,
+            min_cache_sec=min_cache_sec,
+            cache_size_per_sec=cache_size_per_sec,
+        ).to_numpy()
 
     def predict_supervised_cached(
         self,
@@ -467,6 +474,8 @@ class SavedEstimator:
         cache_file: str | os.PathLike,
         max_ram_mb: float,
         max_disk_mb: float,
+        min_cache_sec:float,
+        cache_size_per_sec:int
     ) -> np.ndarray:
         """
         Args:
@@ -482,6 +491,8 @@ class SavedEstimator:
             method="predict_supervised",
             max_ram_mb=max_ram_mb,
             max_disk_mb=max_disk_mb,
+            min_cache_sec=min_cache_sec,
+            cache_size_per_sec=cache_size_per_sec,
         )
 
     def predict_proba_supervised_cached(
@@ -490,6 +501,8 @@ class SavedEstimator:
         cache_file: str | os.PathLike,
         max_ram_mb: float,
         max_disk_mb: float,
+        min_cache_sec:float,
+        cache_size_per_sec:int
     ) -> np.ndarray:
         """
         Args:
@@ -505,6 +518,8 @@ class SavedEstimator:
             method="predict_proba_supervised",
             max_ram_mb=max_ram_mb,
             max_disk_mb=max_disk_mb,
+            min_cache_sec=min_cache_sec,
+            cache_size_per_sec=cache_size_per_sec,
         )
 
     def get_output_for_stacking(self, X, method: str | None) -> pl.DataFrame:
@@ -585,6 +600,8 @@ class SavedEstimator:
         cache_file: str | os.PathLike | None,
         max_ram_mb: float,
         max_disk_mb: float,
+        min_cache_sec:float,
+        cache_size_per_sec:int
     ) -> pl.DataFrame:
         """
         Args:
@@ -604,7 +621,12 @@ class SavedEstimator:
 
             self.cached_frames[cache_file] = CachedFrame(cache_file=cache_file, fn=fn, logger=self.logger, loaded=self.loaded)
 
-        return self.cached_frames[cache_file].load(max_ram_mb=max_ram_mb, max_disk_mb=max_disk_mb)
+        return self.cached_frames[cache_file].load(
+            max_ram_mb=max_ram_mb,
+            max_disk_mb=max_disk_mb,
+            min_cache_sec=min_cache_sec,
+            cache_size_per_sec=cache_size_per_sec,
+        )
 
 
 def _get_fitted_configs(self: "TabularFitter") -> dict[str, dict[str, Any]]:

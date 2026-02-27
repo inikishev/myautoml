@@ -43,6 +43,8 @@ class TabularFitter:
         verbosity: logging verbosity, 0 means no logging and 4 is the most verbose. Defaults to 2.
         max_ram_cache_mb: maximum size of cached dataframes in RAM. Defaults to 1024.
         max_disk_cache_mb: maximum size of cached dataframes on disk. Defaults to 10240.
+        min_cache_sec: if computing estimator output takes less than this many seconds, it will never be cached.
+        cache_els_per_sec: allows caching this many elements per each second computing estimator output takes.
     """
 
     problem_type: ProblemType
@@ -59,6 +61,8 @@ class TabularFitter:
         verbosity: Literal[0, 1, 2, 3, 4] = 2,
         max_ram_cache_mb = 1024,
         max_disk_cache_mb = 10240,
+        min_cache_sec: float = 0.1,
+        cache_size_per_sec: int = 1_000_000
     ):
         # Create a logger
         self.logger = logging.getLogger("myautoml.core.fitter.TabularFitter")
@@ -76,6 +80,8 @@ class TabularFitter:
 
         self.max_ram_cache_mb = max_ram_cache_mb
         self.max_disk_cache_mb = max_disk_cache_mb
+        self.min_cache_sec = min_cache_sec
+        self.cache_size_per_sec = cache_size_per_sec
         self.cached_frames: dict[Path, _fitter_utils.CachedFrame] = {}
 
         atexit.register(self._delete_temp_dir)
@@ -440,7 +446,12 @@ class TabularFitter:
         self.logger.log(1, "used/max. allowed cache in RAM: %.2f/%.2f MB, on disk: %.2f/%.2f MB; ",
                         ram_mb, max_ram_mb, disk_mb, max_disk_mb)
 
-        return self.cached_frames[cache_file].load(max_ram_mb=max_ram_mb, max_disk_mb=max_disk_mb)
+        return self.cached_frames[cache_file].load(
+            max_ram_mb=max_ram_mb,
+            max_disk_mb=max_disk_mb,
+            min_cache_sec=self.min_cache_sec,
+            cache_size_per_sec=self.cache_size_per_sec,
+        )
 
 
     def stack_oof(
@@ -523,6 +534,8 @@ class TabularFitter:
             cache_file=cache_file,
             max_ram_mb=max_ram_mb,
             max_disk_mb=max_disk_mb,
+            min_cache_sec=self.min_cache_sec,
+            cache_size_per_sec=self.cache_size_per_sec,
         )
 
     def stack_new(
