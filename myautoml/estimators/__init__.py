@@ -7,6 +7,7 @@ from .hill_climbing import (
     HillClimbingEnsembleRegressor,
     HillClimbingEnsembleSelector,
 )
+from .hoc import HOCFeatures
 from .interaction import (
     InteractionFeatures,
     interaction_copysign,
@@ -28,8 +29,9 @@ from .weighted_ensemble import (
 )
 
 if TYPE_CHECKING or find_spec("torch") is not None:
+    from .bisine import BisineClassifier, BisineRegressor
     from .df_linear import DFLinearClassifier, DFLinearRegressor
+    from .irelu import IreluClassifier, IreluRegressor
     from .learnable_elm import LearnableELMClassifier, LearnableELMRegressor
     from .mimic import DiagMimic, EighMimic, IterativeMimic
     from .to_cuda import ToCUDA
-    from .bisine import BisineClassifier, BisineRegressor

@@ -13,7 +13,7 @@ from ..utils import torch_utils
 from . import ridge_proba
 
 
-class BisineNet(nn.Module):
+class _BisineNet(nn.Module):
     def __init__(self, input_dim: int, num_targets: int, num_units: int):
         super().__init__()
         self.input_dim = input_dim
@@ -144,8 +144,8 @@ class BisineNet(nn.Module):
 
         return G, H
 
-class SFN:
-    def __init__(self, model: BisineNet, lr: float, eps: float, damping: float):
+class _SFN:
+    def __init__(self, model: _BisineNet, lr: float, eps: float, damping: float):
         self.model = model
         self.lr = lr
         self.eps = eps
@@ -155,12 +155,20 @@ class SFN:
         self.P = self.C * self.P_c
 
     @torch.inference_mode()
-    def step(self, x: torch.Tensor, y: torch.Tensor):
+    def step(self, x: torch.Tensor, y: torch.Tensor, is_classification):
         N = x.shape[0]
         device = x.device
         z = self.model(x)
-        p = torch.softmax(z, dim=1)
-        loss = -torch.mean(torch.sum(y * torch.log(p + 1e-10), dim=1))
+        def loss_fn(z):
+            if is_classification:
+                p = torch.softmax(z, dim=1)
+                loss = -torch.mean(torch.sum(y * torch.log(p + 1e-10), dim=1))
+                return loss, p
+            else:
+                loss = (z - y).square().mean()
+                return loss, z
+
+        loss, p = loss_fn(z)
         G_model, H_model = self.model.compute_grad_and_hessian(x)
         dL_dz = (p - y) / N
         grad = torch.sum(dL_dz.unsqueeze(2) * G_model, dim=0)
@@ -193,9 +201,8 @@ class SFN:
             new_params = current_params + alpha * delta_theta
             self.model.set_flat_params(new_params)
             with torch.no_grad():
-                z_new = self.model(x)
-                p_new = torch.softmax(z_new, dim=1)
-                new_loss = -torch.mean(torch.sum(y * torch.log(p_new + 1e-10), dim=1)).item()
+                new_loss, _ = loss_fn(self.model(x))
+                new_loss = new_loss.item()
             if new_loss < orig_loss + c_ls * alpha * torch.dot(grad_flat, delta_theta):
                 best_alpha = alpha
                 break
@@ -260,11 +267,11 @@ class _BaseBisine(BaseEstimator):
         steps_until_overfit = None
         n_no_improvement_score = 0
 
-        optimizer = SFN(self.model_, lr=self.lr, eps=self.eps, damping=self.damping)
+        optimizer = _SFN(self.model_, lr=self.lr, eps=self.eps, damping=self.damping)
         scorer = get_scorer(self.scoring)
 
         for step in range(max_iter):
-            loss, L = optimizer.step(X_tensor, y_tensor)
+            loss, L = optimizer.step(X_tensor, y_tensor, self.is_classification)
             self.losses_.append(float(loss))
 
             if loss + self.tol < best_loss: n_no_improvement = 0
@@ -306,13 +313,14 @@ class _BaseBisine(BaseEstimator):
 
 
     def _get_y_tensor(self, y: np.ndarray):
-        y_tensor = torch.as_tensor(y, device=self.device, dtype=torch.int64)
+        y_tensor = torch.as_tensor(y, device=self.device)
         if self.is_classification:
             y_oh = torch.zeros(y_tensor.shape[0], len(self.classes_))
-            y_oh.scatter_(1, y_tensor.unsqueeze(1), 1.0)
+            y_oh.scatter_(1, y_tensor.long().unsqueeze(1), 1.0)
             y_tensor = y_oh
 
         else:
+            y_tensor = y_tensor.to(dtype=self.dtype)
             if y_tensor.ndim == 1: y_tensor = y_tensor.unsqueeze(-1)
 
         return y_tensor
@@ -344,7 +352,7 @@ class _BaseBisine(BaseEstimator):
         # create model if not warm started
         if not (self.warm_start and hasattr(self, "model_")):
 
-            self.model_ = BisineNet(
+            self.model_ = _BisineNet(
                 input_dim=X.shape[-1], num_targets=y_tensor.size(-1), num_units=self.num_units
             ).to(device=self.device, dtype=self.dtype)
 
@@ -377,6 +385,7 @@ class _BaseBisine(BaseEstimator):
         X = validate_data(self, X=X, reset=False)
 
         X = torch.as_tensor(X, device=self.device, dtype=self.dtype)
+        self.model_.eval()
         y = self.model_(X)
 
         if y.shape[-1] == 2:
@@ -425,7 +434,7 @@ class BisineClassifier(ClassifierMixin, _BaseBisine):
         max_iter: int = 1000,
         tol: float = 1e-16,
         lr: float = 1.0,
-        eps: float = 1e-4,
+        eps: float = 1e-16,
         damping: float = 1e-3,
         max_no_improvement: int = 10,
         test_size: int | float | None = 0.1,
@@ -447,7 +456,6 @@ class BisineClassifier(ClassifierMixin, _BaseBisine):
     def predict(self, X):
         probas = self.predict_proba(X)
         return self.classes_[np.argmax(probas, axis=1)]
-
 
 
 class BisineRegressor(RegressorMixin, _BaseBisine):
@@ -485,7 +493,7 @@ class BisineRegressor(RegressorMixin, _BaseBisine):
         max_iter: int = 1000,
         tol: float = 1e-16,
         lr: float = 1.0,
-        eps: float = 1e-4,
+        eps: float = 1e-16,
         damping: float = 1e-3,
         max_no_improvement: int = 10,
         test_size: int | float | None = 0.1,
