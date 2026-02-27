@@ -10,6 +10,7 @@ from sklearn.utils.validation import (
 from ..utils.torch_utils import to_numpy
 from ..utils.polars_utils import to_dataframe
 
+
 class ToDtype(TransformerMixin, BaseEstimator):
     """Converts input to ``np.ndarray`` with specified dtype, None to just convert to ``np.ndarray``."""
     def __init__(self, dtype: np.typing.DTypeLike | None):
@@ -25,6 +26,24 @@ class ToDtype(TransformerMixin, BaseEstimator):
         X = validate_data(self, X=X, reset=False, ensure_all_finite=False)
         if self.dtype is None: return np.asarray(X)
         return np.asarray(X, dtype=self.dtype)
+
+
+class NanToNum(TransformerMixin, BaseEstimator):
+    def __init__(self, nan=0, posinf=None, neginf=None):
+        self.nan = nan
+        self.posinf = posinf
+        self.neginf = neginf
+
+    def fit(self, X, y=None):
+        validate_data(self, X=X, y=y, ensure_all_finite=False)
+        self.fitted_ = True
+        return self
+
+    def transform(self, X):
+        check_is_fitted(self)
+        X = validate_data(self, X=X, reset=False, ensure_all_finite=False)
+        return np.nan_to_num(X, nan=self.nan, posinf=self.posinf, neginf=self.neginf)
+
 
 class ToPandas(TransformerMixin, BaseEstimator):
     """Converts input to pandas dataframe."""

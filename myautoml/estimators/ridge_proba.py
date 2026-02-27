@@ -4,7 +4,7 @@ from sklearn.linear_model import RidgeClassifier, RidgeClassifierCV
 
 
 def _predict_proba(scores, n_classes):
-    if n_classes == 2: # scores is (n_samples, )
+    if scores.ndim == 1: # scores is (n_samples, )
         pos = expit(scores)
         return np.stack([1-pos, pos], -1)
 

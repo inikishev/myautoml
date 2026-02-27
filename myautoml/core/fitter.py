@@ -586,7 +586,7 @@ class TabularFitter:
         save: bool
     ) -> np.ndarray:
         """Fits an estimator to the dataset. See ``fit_supervised`` and ``fit_unsupervised`` for arguments."""
-        if save:
+        if save is False:
             assert is_supervised is True
 
         if max_folds is not None:
@@ -1123,7 +1123,7 @@ class TabularFitter:
             use_unlabeled = use_unlabeled,
             fit_fn = fit_fn,
             info = info,
-            save = False,
+            save = True,
         )
 
 
