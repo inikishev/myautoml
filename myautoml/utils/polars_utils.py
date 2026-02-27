@@ -36,7 +36,8 @@ def to_dataframe(x) -> pl.DataFrame:
         if isinstance(x, torch.Tensor):
             return pl.from_torch(x, force=True)
 
-    x = np.asarray(x)
+    if hasattr(x, "toarray") and callable(getattr(x, "toarray")): x = x.toarray()
+    else: x = np.asarray(x)
     return pl.from_numpy(x)
 
 def to_lazyframe(x) -> pl.LazyFrame:

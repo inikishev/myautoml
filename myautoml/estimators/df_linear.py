@@ -1,3 +1,4 @@
+import random
 import math
 from typing import TYPE_CHECKING, Literal
 from collections.abc import Callable
@@ -33,41 +34,6 @@ def _get_init_from_ridge_classifier(X, y, random_state):
     ridge = RidgeClassifier(random_state=random_state).fit(X, y)
     return ridge.coef_.T, ridge.intercept_
 
-def _nan_to_inf(x):
-    if not math.isfinite(x): return math.inf
-    return x
-
-def stp_minimize(objective, x):
-
-    sigma = 1e-4
-    v = objective(x)
-
-    n_no_impovement = 0
-    while True:
-        z = np.random.normal(0, sigma, size=x.shape)
-        v_plus = _nan_to_inf(objective(x + z))
-        v_minus = _nan_to_inf(objective(x - z))
-
-        if v < v_plus and v < v_minus:
-            sigma = sigma * 0.1
-            n_no_impovement += 1
-            if sigma < 1e-20: sigma = 1e4
-
-        else:
-            n_no_impovement = 0
-            sigma = sigma * 1.1
-            if v_plus < v_minus:
-                x = x + z
-                v = v_plus
-            else:
-                x = x - z
-                v = v_minus
-
-        if n_no_impovement >= 100:
-            break
-
-
-    return x
 
 class _BaseDFLinear(BaseEstimator):
     is_classification: bool
@@ -80,6 +46,8 @@ class _BaseDFLinear(BaseEstimator):
         l2: float,
         init: Literal["logreg", "ridge", "random"],
         methods,
+        tol: float,
+        maxiter: int | None,
         jac: Literal["2-point", "3-point"],
         device,
         dtype,
@@ -91,6 +59,8 @@ class _BaseDFLinear(BaseEstimator):
         self.l1 = l1
         self.l2 = l2
         self.methods = methods
+        self.tol = tol
+        self.maxiter = maxiter
         self.jac = jac
         self.init = init
         self.device = device
@@ -169,6 +139,7 @@ class _BaseDFLinear(BaseEstimator):
         self.activation_ = activation
 
         self.eval_count_ = 0
+        self.losses_ = []
         def objective(x: np.ndarray, grad=None):
             if grad is not None: # grad is needed for nlopt but not used
                 assert grad.size == 0
@@ -223,6 +194,7 @@ class _BaseDFLinear(BaseEstimator):
 
             self.eval_count_ += 1
             if self.verbose >= 2: print(f'{self.eval_count_} {error = }')
+            self.losses_.append(float(error))
             return error
 
         params = torch.cat([W_init.ravel(), b_init.ravel()]).numpy(force=True)
@@ -230,17 +202,20 @@ class _BaseDFLinear(BaseEstimator):
 
         methods = self.methods
         if methods is None:
-            if params.size < 8: methods = ["bfgs", "cobyqa", "cobyla", "stp", "powell"]
-            elif params.size < 64: methods = ["cobyqa", "cobyla", "stp", "powell"]
-            elif params.size < 256: methods = ["cobyla", "stp", "powell"]
-            elif params.size < 512: methods = ["stp", "powell"]
-            else: methods = ["stp"]
+            if params.size < 8: methods = ["cobyqa", "bfgs"]
+            elif params.size < 128: methods = ["cobyqa", "cobyla"]
+            elif params.size < 256: methods = ["cobyla"]
+            else: methods = ["cobyla"] # todo add like stp spsa
 
             if importlib.util.find_spec("nlopt") is not None:
-                if params.size < 512: methods.append("sbplx")
+                if params.size < 8: methods.insert(-2, "sbplx")
+                elif params.size < 512: methods.append("sbplx")
             else:
-                if params.size < 16: methods.append("nelder-mead")
+                if params.size < 8: methods.insert(-2, "nelder-mead")
+                if params.size < 32: methods.append("nelder-mead")
 
+        maxiter = self.maxiter
+        if maxiter is None: maxiter = max(min(params.size ** 2, 10_000), 100)
 
         for method in methods:
 
@@ -248,12 +223,12 @@ class _BaseDFLinear(BaseEstimator):
                 import nlopt
                 opt = nlopt.opt(nlopt.LN_SBPLX, params.size)
                 opt.set_min_objective(objective)
+                opt.set_xtol_rel(self.tol*100)
+                opt.set_xtol_abs(self.tol*100)
+                opt.set_ftol_abs(self.tol*100)
+                opt.set_ftol_abs(self.tol*100)
+                opt.set_maxeval(maxiter)
                 params = opt.optimize(params)
-
-
-            elif method == "stp":
-                params = stp_minimize(objective, params)
-
 
             else:
                 import scipy.optimize
@@ -261,11 +236,16 @@ class _BaseDFLinear(BaseEstimator):
                 jac = self.jac
                 if method.lower() in ("cobyla", "cobyqa", "powell", "nelder-mead"): jac = None
 
+                options: dict = {"maxiter": maxiter}
+                if method == "powell": options.update({"xtol": self.tol, "ftol": self.tol})
+
                 res = scipy.optimize.minimize(
                     objective,
                     x0=params,
                     method=method,
                     jac=jac,
+                    tol=self.tol,
+                    options=options,
                 )
 
                 params = res.x
@@ -318,16 +298,17 @@ class DFLinearClassifier(ClassifierMixin, _BaseDFLinear):
             "auto" for sigmoid or softmax depending on number of classes.
         l1: L1 regularization. Defaults to 0.
         l2: L2 regularization. Defaults to 0.
-        init: how to initialize weights:
+        init: how to initialize weights
             - "logreg" - fit LogisticRegression and use it's fitted coefficients (default).
             - "ridge" - fit RidgeClassifier and use it's fitted coefficients.
             - "random" - initialize randomly.
         methods: sequence of string method names. Each method continues from solution found by previous method.
             By default picks methods based on number of parameters. Defaults to None.
-            Available methods:
-            - all methods in ``scipy.optimize.minimize``
-            - "sbplx" - SBPLX if NLOpt is installed (usually the best solver)
-            - "stp" - three-point direct search which may be useful to get slight improvement over logreg/ridge initialization on very high dimensional models.
+            Available methods
+            - all methods in ``scipy.optimize.minimize``. Efficient for under ~100 parameters.
+            - "sbplx" - SBPLX if NLOpt is installed. Efficient for under ~100 parameters.
+        tol: algorithm-specific tolerance for termination.
+        maxiter: max number of iterations per algorithm. None uses ``clip(ndim**2, min=100, max=10_000)``
         jac: finite difference formula fot approximating jacobian for gradient-based solvers,
             2-point or 3-point. Defaults to '3-point'.
         device: device for matrix multiplication, set to "cpu" for small datasets. The solvers run on CPU
@@ -348,11 +329,13 @@ class DFLinearClassifier(ClassifierMixin, _BaseDFLinear):
         l2: float = 0,
         init: Literal["logreg", "ridge", "random"] = 'logreg',
         methods = None,
+        tol: float = 1e-8,
+        maxiter: int | None = None,
         jac: Literal["2-point", "3-point"] = "3-point",
         device=CUDA_IF_AVAILABLE,
-        dtype=torch.float32,
+        dtype=torch.float64,
         random_state=0,
-        verbose=False,
+        verbose=0,
     ):
         kwargs = locals().copy()
         del kwargs["self"], kwargs["__class__"]
@@ -396,9 +379,10 @@ class DFLinearRegressor(RegressorMixin, _BaseDFLinear):
         methods: sequence of string method names. Each method continues from solution found by previous method.
             By default picks methods based on number of parameters. Defaults to None.
             Available methods
-            - all methods in ``scipy.optimize.minimize``
-            - "sbplx" - SBPLX if NLOpt is installed (usually the best solver)
-            - "stp" - three-point direct search which may be useful to get slight improvement over logreg/ridge initialization on very high dimensional models.
+            - all methods in ``scipy.optimize.minimize``. Efficient for under ~100 parameters.
+            - "sbplx" - SBPLX if NLOpt is installed. Efficient for under ~100 parameters.
+        tol: algorithm-specific tolerance for termination.
+        maxiter: max number of iterations per algorithm. None uses ``clip(ndim**2, min=100, max=10_000)``
         jac: finite difference formula fot approximating jacobian for gradient-based solvers,
             2-point or 3-point. Defaults to '3-point'.
         device: device for matrix multiplication, set to "cpu" for small datasets. The solvers run on CPU
@@ -419,11 +403,13 @@ class DFLinearRegressor(RegressorMixin, _BaseDFLinear):
         l2: float = 0,
         init: Literal["ridge", "random"] = 'ridge',
         methods = None,
+        tol: float = 1e-8,
+        maxiter: int | None = None,
         jac: Literal["2-point", "3-point"] = "3-point",
         device=CUDA_IF_AVAILABLE,
-        dtype=torch.float32,
+        dtype=torch.float64,
         random_state=0,
-        verbose=False,
+        verbose=0,
     ):
         kwargs = locals().copy()
         del kwargs["self"], kwargs["__class__"]

@@ -17,7 +17,7 @@ class RidgeClassifierProba(RidgeClassifier):
         scores = self.decision_function(X) # returns (n_samples, n_classes) or (n_samples, ) for binary
         return _predict_proba(scores, len(self.classes_))
 
-class RidgeClassifierCVProba(RidgeClassifierCV):
+class RidgeClassifierProbaCV(RidgeClassifierCV):
     def predict_proba(self, X):
         scores = self.decision_function(X) # returns (n_samples, n_classes) or (n_samples, ) for binary
         return _predict_proba(scores, len(self.classes_))

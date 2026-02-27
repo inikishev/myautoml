@@ -115,12 +115,18 @@ class AutoEncoder:
         binary_to_bool: bool = True,
         encode_target: bool = True,
         drop_cols: str | Sequence[str] | None = None,
+        numeric_cols: str | Sequence[str] | None = None,
+        categorical_cols: str | Sequence[str] | None = None,
+        text_cols: str | Sequence[str] | None = None,
     ):
         self.convert_categorical = convert_categorical
         self.drop_constant = drop_constant
         self.binary_to_bool = binary_to_bool
         self.encode_target = encode_target
         self.drop_cols = drop_cols
+        self.text_cols = text_cols
+        self.categorical_cols = categorical_cols
+        self.numeric_cols = numeric_cols
 
     @pl.StringCache()
     def fit(
@@ -145,7 +151,7 @@ class AutoEncoder:
         else:
             X = to_dataframe(X)
 
-        X_all = X
+        X_all: pl.DataFrame = X
         if X_unlabeled is not None:
             X_unlabeled = to_dataframe(X_unlabeled)
             X_all = pl.concat([X, X_unlabeled])
@@ -177,17 +183,33 @@ class AutoEncoder:
 
             stages.append(DropConstant(exclude=self.label_))
 
+        # Detect column types
+        def _tolist(x: str | Sequence[str] | None):
+            if x is None: return []
+            if isinstance(x, str): return [x]
+            return list(x)
+
+        text_cols = _tolist(self.text_cols)
+        numeric_cols = _tolist(self.numeric_cols)
+        categorical_cols = _tolist(self.categorical_cols)
+
         # Detect text columns
-        self.text_cols_ = []
+        self.text_cols_ = text_cols
         for col in X_all.select(pl.selectors.string(include_categorical=True)):
             if (col.name == self.label_) or (col.name in drop_cols): continue
+            if (col.name in numeric_cols) or (col.name in categorical_cols): continue
             if col.n_unique() >= len(col) / 2:
                 self.text_cols_.append(col.name)
 
         # cast string columns as categorical except text
-        exclude = self.text_cols_.copy()
-        if self.label_ is not None: exclude.append(self.label_)
-        stages.append(Cast(pl.selectors.string(), pl.Categorical, exclude=exclude))
+        if self.convert_categorical:
+            exclude = self.text_cols_.copy() + numeric_cols
+            if self.label_ is not None: exclude.append(self.label_)
+            cast_cols = sorted(set(X_all.select(pl.selectors.string()).columns + categorical_cols))
+            stages.append(Cast(include=cast_cols, exclude=exclude, dtype=pl.Categorical))
+
+        if len(numeric_cols) > 0:
+            stages.append(Cast(include=numeric_cols, dtype=pl.Float64))
 
         self.X_chain_ = Chain(stages)
         self.X_chain_.fit(X_all)

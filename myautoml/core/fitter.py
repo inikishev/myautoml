@@ -1,4 +1,3 @@
-from functools import partial
 import atexit
 import json
 import logging
@@ -13,6 +12,7 @@ from collections import defaultdict
 from collections.abc import Callable, Sequence
 from contextlib import contextmanager, nullcontext
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -20,13 +20,13 @@ import joblib
 import numpy as np
 import polars as pl
 from sklearn.model_selection import KFold, StratifiedKFold
+from sklearn.pipeline import make_pipeline
 
-from . import _fitter_utils
 from ..metrics import scoring
 from ..polars_transformers.auto_encoder import AutoEncoder, _AutoEncoderWrapper
 from ..utils import numpy_utils, polars_utils, python_utils, torch_utils
 from ..utils.rng import RNG
-
+from . import _fitter_utils
 
 ResponseMethod = Literal["decision_function", "predict", "predict_proba", "transform"] | str
 ProblemType = Literal["binary", "multiclass", "regression", "multitarget", "multioutput", "multitask"]
@@ -138,6 +138,9 @@ class TabularFitter:
         binary_to_bool: bool = True,
         encode_target: bool = True,
         drop_cols: str | Sequence[str] | None = None,
+        numeric_cols: str | Sequence[str] | None = None,
+        categorical_cols: str | Sequence[str] | None = None,
+        text_cols: str | Sequence[str] | None = None,
 
     ):
         """Initialize or load this ``TabularFitter``.
@@ -159,7 +162,8 @@ class TabularFitter:
             binary_to_bool: whether to convert binary features to bool. Defaults to True.
             encode_target: whether to encode target - ordinally for classification or to float64 for regression.
                 Defaults to True.
-            drop_cols: columns to ignore (like id)
+            drop_cols: columns to ignore (like id),
+
         """
         if n_folds <= 1:
             raise RuntimeError(f"n_folds should be an integer larger than 1, got {n_folds}")
@@ -356,6 +360,9 @@ class TabularFitter:
     def n_folds(self) -> int: return self.fold_set.n_folds
 
     def get_config(self, estimator: str):
+        if estimator not in self.estimators:
+            raise KeyError(f"Estimator {estimator} doesn't exist.")
+
         return next(iter(
             next(iter(
                 self.estimators[estimator].values()
@@ -575,8 +582,13 @@ class TabularFitter:
         use_unlabeled: bool,
         fit_fn: Callable[[Any, pl.DataFrame, pl.Series, pl.DataFrame | None, np.ndarray | None], Any],
         info: Any,
+
+        save: bool
     ) -> np.ndarray:
         """Fits an estimator to the dataset. See ``fit_supervised`` and ``fit_unsupervised`` for arguments."""
+        if save:
+            assert is_supervised is True
+
         if max_folds is not None:
             if max_folds <= 1:
                 raise RuntimeError(f"max_folds should be an integer larger than 1, got {max_folds}")
@@ -587,12 +599,13 @@ class TabularFitter:
 
         # Create estimator folder
         dir = self.root / "estimators" / name
-        if (dir / "done.txt").exists():
-            raise FileExistsError(f"Estimator {name} already exists, choose a different unique name.")
+        if save:
+            if (dir / "done.txt").exists():
+                raise FileExistsError(f"Estimator {name} already exists, choose a different unique name.")
 
-        dir.mkdir(exist_ok=True)
-        (dir / "data").mkdir(exist_ok=True)
-        (dir / "data_unlabeled").mkdir(exist_ok=True)
+            dir.mkdir(exist_ok=True)
+            (dir / "data").mkdir(exist_ok=True)
+            (dir / "data_unlabeled").mkdir(exist_ok=True)
 
         # Load folds
         if use_folds:
@@ -661,8 +674,9 @@ class TabularFitter:
                     train_index, test_index = fold_set[set_i][fold_i]
                     X_train = X_oof[train_index]
                     y_train = self.y[train_index]
-                    pl.from_numpy(test_index).write_parquet(
-                        dir / "data" / f"test_index-{set_i}-{fold_i}.parquet", compression_level=3)
+                    if save:
+                        pl.from_numpy(test_index).write_parquet(
+                            dir / "data" / f"test_index-{set_i}-{fold_i}.parquet", compression_level=3)
 
                 else:
                     train_index = test_index = None
@@ -698,11 +712,12 @@ class TabularFitter:
                     if fitted_estimator is None: # pyright:ignore[reportUnnecessaryComparison]
                         raise RuntimeError(f"fit_fn for {name} returned None. Make sure estimator.fit returns self.")
 
-                    try:
-                        joblib.dump(fitted_estimator, fitted_file, compress=3)
-                    except Exception as e:
-                        if os.path.exists(fitted_file): os.remove(fitted_file)
-                        raise e
+                    if save:
+                        try:
+                            joblib.dump(fitted_estimator, fitted_file, compress=3)
+                        except Exception as e:
+                            if os.path.exists(fitted_file): os.remove(fitted_file)
+                            raise e
 
                 if hasattr(fitted_estimator, "__myautoml_used_estimators__"):
                     ret = getattr(fitted_estimator, "__myautoml_used_estimators__")()
@@ -818,7 +833,7 @@ class TabularFitter:
 
 
             # After each fold set, store out-of-fold predictions for stacking
-            if is_supervised:
+            if is_supervised and save:
                 assert fold_set is not None
                 assert len(oof_preds_list) == len(oof_indexes_list) == fold_set.n_folds
 
@@ -869,6 +884,24 @@ class TabularFitter:
 
                 del argsort
 
+
+        fit_sec = time.time() - start_time
+
+        # Log various info
+        if method_was_none: self.logger.info('Inferred method as "%s"', method)
+        if is_categorical_was_none: self.logger.info("Inferred is_categorical as %s", is_categorical)
+
+        if "score_train" in scores:
+            self.logger.info(
+                "Mean %s: train = %.8f; test = %.8f; Took %.2f seconds",
+                self.scorer.name, np.mean(scores["score_train"]), np.mean(scores["score_test"]), fit_sec)
+        else:
+            self.logger.info("Took %.2f seconds", fit_sec)
+
+        if save is False:
+            # if estimator is not saved, skip all saving logic (only supervised)
+            return np.array(scores["error_test"])
+
         # all of those should be set by now
         assert method is not None
         assert is_categorical is not None
@@ -876,11 +909,6 @@ class TabularFitter:
         assert obj_repr is not None
         assert in_features is not None
         assert out_features is not None
-
-        if method_was_none: self.logger.info('Inferred method as "%s"', method)
-        if is_categorical_was_none: self.logger.info("Inferred is_categorical as %s", is_categorical)
-
-        fit_sec = time.time() - start_time
 
         # Save config
         config = {
@@ -923,22 +951,16 @@ class TabularFitter:
         with open(dir / "repr.txt", "w", encoding='utf-8') as f:
             f.write(obj_repr)
 
+        # Save info
         if info is not None:
             try:
                 joblib.dump(info, dir / "info.joblib", compress=3)
             except Exception as e:
-                self.logger.error(f"Failed to save info for {name}:\n{e}")
+                self.logger.error("Failed to save info for %s:\n%r", name, e)
 
         # Mark as done
         with open(dir / "done.txt", "w", encoding='utf-8') as f:
             f.write("")
-
-        if "score_train" in scores:
-            self.logger.info(
-                "Mean %s: train = %.8f; test = %.8f; Took %.2f seconds",
-                self.scorer.name, np.mean(scores["score_train"]), np.mean(scores["score_test"]), fit_sec)
-        else:
-            self.logger.info("Took %.2f seconds", fit_sec)
 
         if is_supervised: return np.array(scores["error_test"])
         return np.empty(0)
@@ -962,6 +984,7 @@ class TabularFitter:
             [Any, pl.DataFrame, pl.Series, pl.DataFrame | None, np.ndarray | None], Any
         ] = _fitter_utils.default_fit_fn,
         info: Any = None,
+        save: bool = True,
     ) -> np.ndarray:
         """Fit a supervised estimator to the dataset and score it.
 
@@ -990,7 +1013,11 @@ class TabularFitter:
                 Defaults to ``estimator.fit(X, y, sample_weights=sample_weights)``.
             info: if specified, pickled and saved to estimator folder as ``info.joblib``.
                 This can be used to store hyperparameters when tuning them for later reference.
+            save: if False, estimator will not be saved, you can use this when tuning hyperparameters.
         """
+        if isinstance(estimator, (list, tuple)):
+            if len(estimator) == 1: estimator = estimator[0]
+            else: estimator = make_pipeline(*estimator)
 
         inputs = _fitter_utils._validate_inputs(inputs)
 
@@ -1014,6 +1041,7 @@ class TabularFitter:
             use_unlabeled = use_unlabeled,
             fit_fn = fit_fn,
             info = info,
+            save = save,
         )
 
 
@@ -1069,6 +1097,9 @@ class TabularFitter:
             info: if specified, pickled and saved to estimator folder as ``info.joblib``.
                 This can be used to store hyperparameters when tuning them for later reference.
         """
+        if isinstance(estimator, (list, tuple)):
+            if len(estimator) == 1: estimator = estimator[0]
+            else: estimator = make_pipeline(*estimator)
 
         inputs = _fitter_utils._validate_inputs(inputs)
 
@@ -1092,6 +1123,7 @@ class TabularFitter:
             use_unlabeled = use_unlabeled,
             fit_fn = fit_fn,
             info = info,
+            save = False,
         )
 
 

@@ -8,10 +8,11 @@ from sklearn.utils.validation import (
 
 
 from ..utils.torch_utils import to_numpy
+from ..utils.polars_utils import to_dataframe
 
 class ToDtype(TransformerMixin, BaseEstimator):
-    """Converts input to ``np.ndarray`` with specified dtype, None (default) to just convert to ``np.ndarray``."""
-    def __init__(self, dtype: np.typing.DTypeLike | None = None):
+    """Converts input to ``np.ndarray`` with specified dtype, None to just convert to ``np.ndarray``."""
+    def __init__(self, dtype: np.typing.DTypeLike | None):
         self.dtype = dtype
 
     def fit(self, X, y=None):
@@ -40,3 +41,32 @@ class ToPandas(TransformerMixin, BaseEstimator):
         if isinstance(X, pd.DataFrame): return X
         if isinstance(X, pl.DataFrame): return X.to_pandas()
         return pd.DataFrame(to_numpy(X))
+
+class ToList(TransformerMixin, BaseEstimator):
+    """For text feature extractors. if COlumn is None, then there should be 1 column in X"""
+    def __init__(self, column: str | None = None):
+        self.column = column
+
+    def fit(self, X, y=None):
+        self.fitted_ = True
+
+        if self.column is None: # X is str
+            validate_data(self, X=X, y=y, ensure_all_finite=False, dtype=str)
+
+        else: # X may have other cols
+            validate_data(self, X=X, y=y, ensure_all_finite=False)
+
+        return self
+
+    def transform(self, X) -> list[str]:
+        check_is_fitted(self)
+        self.fitted_ = True
+
+        if self.column is None:
+            X = validate_data(self, X=X, ensure_all_finite=False, reset=False, dtype=str)
+            if X.ndim == 2: X = np.squeeze(X, -1)
+            assert X.ndim == 1
+            return X.tolist()
+
+        validate_data(self, X=X, ensure_all_finite=False)
+        return to_dataframe(X)[self.column].cast(pl.String).to_list()

@@ -242,13 +242,13 @@ def _validate_inputs(
     return _sort_inputs(validated)
 
 
-def _min_fit_sec_for_caching(X: np.ndarray | pl.DataFrame, alpha=1000):
+def _min_fit_sec_for_caching(X: np.ndarray | pl.DataFrame):
     numel = math.prod(X.shape)
     if numel > 125_000_000: return 1e100 # return very large value avoid caching more than ~1GB
 
-    # base formula is sqrt(numel * 100) / 1000, this skips many caches that aren't faster
-    value = math.sqrt(numel * 100) / alpha
-    return max(value, 1)
+     # 1_000_000 elements will cache if processing them takes over 1 second (8 MB if float64)
+     # saving processing times under 0.2 seconds is not beneficial
+    return max(0.2, numel / 1_000_000)
 
 
 class CacheKey(NamedTuple):
@@ -292,7 +292,7 @@ class CachedFrame:
         df = self.fn()
 
         time_sec = time.perf_counter() - start
-        min_sec = _min_fit_sec_for_caching(df, 1000)
+        min_sec = _min_fit_sec_for_caching(df)
 
         if time_sec > min_sec:
 

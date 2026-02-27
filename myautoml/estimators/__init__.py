@@ -8,14 +8,15 @@ from .hill_climbing import (
     HillClimbingEnsembleSelector,
 )
 from .kernel_approximation import LaplaceRFF
-from .ridge_proba import RidgeClassifierProba, RidgeClassifierCVProba
+from .ridge_proba import RidgeClassifierProba, RidgeClassifierProbaCV
 from .weighted_ensemble import (
     GreedyWeightedEnsembleClassifier,
     GreedyWeightedEnsembleRegressor,
     GreedyWeightedEnsembleSelector,
 )
 
-from .utility import ToDtype, ToPandas
+from .utility import ToDtype, ToPandas, ToList
+from .interaction import InteractionFeatures, interaction_copysign, interaction_divide, interaction_exp, interaction_log, interaction_max_neg, interaction_min_neg
 
 if TYPE_CHECKING or find_spec("torch") is not None:
     from .df_linear import DFLinearClassifier, DFLinearRegressor
