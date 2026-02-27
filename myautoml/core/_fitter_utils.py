@@ -685,8 +685,8 @@ def default_fit_fn(estimator, X: pl.DataFrame, y: pl.Series,
                            "Specify a custom fit_fn, or use `myautoml.unlabeled_fit_fn` or "
                            "`myautoml.semi_supervised_classifier_fit_fn`")
 
-    if sample_weight is not None: return estimator.fit(X, y, sample_weight=sample_weight)
-    return estimator.fit(X, y)
+    if sample_weight is not None: return estimator.fit(X, y.to_numpy(), sample_weight=sample_weight)
+    return estimator.fit(X, y.to_numpy())
 
 
 def semi_supervised_classifier_fit_fn(estimator, X: pl.DataFrame, y: pl.Series,
@@ -705,7 +705,7 @@ def semi_supervised_classifier_fit_fn(estimator, X: pl.DataFrame, y: pl.Series,
     y_unlabeled = np.full((X_unlabeled.height), fill_value=-1)
     y_full = pl.concat([y.cast(pl.Int64), pl.Series(y.name, y_unlabeled, dtype=pl.Int64)], how='vertical')
 
-    return estimator.fit(X_full, y_full)
+    return estimator.fit(X_full, y_full.to_numpy())
 
 def unlabeled_fit_fn(estimator, X: pl.DataFrame, y: pl.Series,
                      X_unlabeled: pl.DataFrame | None, sample_weight: np.ndarray | None):
