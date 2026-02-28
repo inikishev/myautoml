@@ -225,10 +225,7 @@ class _BaseBisine(BaseEstimator):
         eps: float,
         damping: float,
         max_no_improvement: int,
-        test_size: int | float | None,
         scoring,
-        refit_full: bool,
-        warm_start: bool,
         device: torch.types.Device,
         dtype: torch.dtype,
         verbose: bool,
@@ -240,13 +237,10 @@ class _BaseBisine(BaseEstimator):
         self.damping = damping
         self.num_units = num_units
         self.verbose = verbose
-        self.warm_start = warm_start
-        self.refit_full = refit_full
         self.max_no_improvement = max_no_improvement
         self.device = device
         self.dtype = dtype
         self.scoring = scoring
-        self.test_size = test_size
 
     @torch.inference_mode()
     def _fit(
@@ -332,51 +326,26 @@ class _BaseBisine(BaseEstimator):
             self.classes_, y = np.unique(y, return_inverse=True)
 
         if X_test is not None:
-            X_train, y_train = X, y
             X_test, y_test = validate_data(self, X=X_test, y=y_test)
-
-        else:
-            # train/test split
-            if self.test_size is None:
-                X_train, y_train = X, y
-                X_test = y_test = None
-            else:
-                stratify = y if self.is_classification else None
-                X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=self.test_size, stratify=stratify)
-
+            if self.is_classification: y_test = self.classes_[y_test]
 
         # convert train data to tensor
-        X_tensor = torch.as_tensor(X_train, device=self.device, dtype=self.dtype)
-        y_tensor = self._get_y_tensor(y_train)
+        X_tensor = torch.as_tensor(X, device=self.device, dtype=self.dtype)
+        y_tensor = self._get_y_tensor(y)
 
         # create model if not warm started
-        if not (self.warm_start and hasattr(self, "model_")):
-
-            self.model_ = _BisineNet(
-                input_dim=X.shape[-1], num_targets=y_tensor.size(-1), num_units=self.num_units
-            ).to(device=self.device, dtype=self.dtype)
-
-            self.init_state_dict_ = torch_utils.copy_state_dict(self.model_.state_dict(), "cpu")
+        self.model_ = _BisineNet(
+            input_dim=X.shape[-1], num_targets=y_tensor.size(-1), num_units=self.num_units
+        ).to(device=self.device, dtype=self.dtype)
 
         # fit
         best_state_dict, steps_until_overfit = self._fit(X_tensor, y_tensor, X_test, y_test, max_iter=self.max_iter)
 
         if X_test is not None:
-            if self.refit_full:
-                # refit on full data for number of steps until model overfitted
-                assert steps_until_overfit is not None
-                self.model_.load_state_dict(torch_utils.copy_state_dict(self.init_state_dict_, self.device))
+            # load state dict with best test score
+            assert best_state_dict is not None
+            self.model_.load_state_dict(torch_utils.copy_state_dict(best_state_dict, self.device))
 
-                X_tensor = torch.as_tensor(X, device=self.device, dtype=self.dtype)
-                y_tensor = self._get_y_tensor(y)
-                self._fit(X_tensor, y_tensor, None, None, max_iter=steps_until_overfit)
-
-            else:
-                # load state dict with best test score
-                assert best_state_dict is not None
-                self.model_.load_state_dict(torch_utils.copy_state_dict(best_state_dict, self.device))
-
-        del self.init_state_dict_
         return self
 
     @torch.inference_mode()
@@ -414,13 +383,7 @@ class BisineClassifier(ClassifierMixin, _BaseBisine):
         damping: damping in optimizer.
         max_no_improvement: max number of consecutive steps that attained no loss improvement larger than ``tol``,
             or validation score imporvement. Defaults to 10.
-        test_size: size of test set for ealy stopping, None to disable ealy stopping or if you pass your own test set.
-            Defaults to 0.1.
         scoring: scoring for early stopping. Defaults to "roc_auc".
-        refit_full: whether to refit on full data for same number of steps as performed until early stopping.
-            Defaults to True.
-        warm_start: consecutive calls to ``fit`` will initialize to fitted model (doesn't apply to ``refit_full``).
-            Defaults to False.
         device: device. Defaults to 'cpu'.
         dtype: dtype. Defaults to torch.float64.
         verbose: verbose. Defaults to False.
@@ -437,10 +400,7 @@ class BisineClassifier(ClassifierMixin, _BaseBisine):
         eps: float = 1e-16,
         damping: float = 1e-3,
         max_no_improvement: int = 10,
-        test_size: int | float | None = 0.1,
         scoring = "roc_auc",
-        refit_full: bool = True,
-        warm_start: bool = False,
         device: torch.types.Device = 'cpu',
         dtype: torch.dtype = torch.float64,
         verbose: bool = False,
@@ -473,13 +433,7 @@ class BisineRegressor(RegressorMixin, _BaseBisine):
         damping: damping in optimizer.
         max_no_improvement: max number of consecutive steps that attained no loss improvement larger than ``tol``,
             or validation score imporvement. Defaults to 10.
-        test_size: size of test set for ealy stopping, None to disable ealy stopping or if you pass your own test set.
-            Defaults to 0.1.
         scoring: scoring for early stopping. Defaults to "mse".
-        refit_full: whether to refit on full data for same number of steps as performed until early stopping.
-            Defaults to True.
-        warm_start: consecutive calls to ``fit`` will initialize to fitted model (doesn't apply to ``refit_full``).
-            Defaults to False.
         device: device. Defaults to 'cpu'.
         dtype: dtype. Defaults to torch.float64.
         verbose: verbose. Defaults to False.
@@ -496,10 +450,7 @@ class BisineRegressor(RegressorMixin, _BaseBisine):
         eps: float = 1e-16,
         damping: float = 1e-3,
         max_no_improvement: int = 10,
-        test_size: int | float | None = 0.1,
         scoring = "mse",
-        refit_full: bool = True,
-        warm_start: bool = False,
         device: torch.types.Device = 'cpu',
         dtype: torch.dtype = torch.float64,
         verbose: bool = False,
