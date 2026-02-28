@@ -217,8 +217,12 @@ def _sort_inputs(inputs: list[tuple[str | None, str | None]]) -> list[tuple[str 
         assert len(i) == 2
         if i[0] is None: assert i[1] is None
 
+    def _strip(s: str | None):
+        if isinstance(s, str): return s.strip()
+        return s
+
     return sorted(
-        set((i1,i2) for i1,i2 in inputs),
+        set((_strip(i1), _strip(i2)) for i1,i2 in inputs),
         key = lambda x: tuple("" if i is None else i for i in x),
     )
 
@@ -227,17 +231,22 @@ def _validate_inputs(
 ) -> list[tuple[str | None, str | None]]:
 
     if inputs is None: return [(None, None)]
-    if isinstance(inputs, str): return [(inputs, None)]
+    if isinstance(inputs, str): inputs = [inputs,]
 
     validated: list[tuple[str | None, str | None]] = []
     for input in inputs:
         if input is None: validated.append((None, None))
-        elif isinstance(input, str): validated.append((input, None))
+        elif isinstance(input, str):
+            if "/" in input:
+                input, method = input.split("/")
+                validated.append((input, method))
+            else:
+                validated.append((input, None))
         else:
             if len(input) != 2: raise RuntimeError(f"{input} should be length-2 tuple")
-            estimator, response_method = input
-            if estimator is None: response_method = None
-            validated.append((estimator, response_method))
+            estimator, method = input
+            if estimator is None: method = None
+            validated.append((estimator, method))
 
     return _sort_inputs(validated)
 

@@ -39,10 +39,13 @@ if TYPE_CHECKING or find_spec("torch") is not None:
     from .irelu import IreluClassifier, IreluRegressor
     from .learnable_elm import LearnableELMClassifier, LearnableELMRegressor
     from .mimic import DiagMimic, EighMimic, IterativeMimic
-    from .to_cuda import ToCUDA
+    from .to_cuda import ToCUDA, CUDAEstimator
 
 if TYPE_CHECKING or find_spec("cleanlab") is not None:
     from .clean_learning import CleanLearningClassifier, CleanLearningRegressor
 
 if TYPE_CHECKING or find_spec("autogluon") is not None:
     from .autogluon import AutoGluonClassifier, AutoGluonRegressor
+
+if TYPE_CHECKING or find_spec("xgboost") is not None:
+    from .xgb_earlystop import XBGEarlyStoppingClassifierCV, XBGEarlyStoppingRegressorCV

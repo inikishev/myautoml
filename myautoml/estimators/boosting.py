@@ -1,6 +1,7 @@
-from typing import Literal
+from typing import Literal, Any
 
 import numpy as np
+import copy
 from scipy.special import expit, softmax # pylint:disable=no-name-in-module
 from sklearn.base import BaseEstimator, ClassifierMixin, RegressorMixin
 from sklearn.model_selection import KFold, StratifiedKFold
@@ -52,14 +53,13 @@ class _BaseOOFBoosting(BaseEstimator):
         self,
         estimator,
         n_rounds: int,
+        scoring,
         step_size: float | None,
         ls_iters: int | None,
         loss: Literal["mse", "mae", "ce"] | _Loss,
         tol: float,
-        n_folds: int,
-        cv,
+        cv: int | Any,
         shuffle: bool,
-        scoring,
         random_state,
         verbose
     ):
@@ -69,14 +69,13 @@ class _BaseOOFBoosting(BaseEstimator):
         self.ls_iters = ls_iters
         self.loss = loss
         self.tol = tol
-        self.n_folds = n_folds
         self.cv = cv
         self.shuffle = shuffle
         self.scoring = scoring
         self.random_state = random_state
         self.verbose = verbose
 
-    def fit(self, X, y):
+    def fit(self, X, y, **fit_kwargs):
         _, y = validate_data(self, X=X, y=y)
         if self.is_classification:
             self.classes_, y = np.unique(y, return_inverse=True)
@@ -85,17 +84,17 @@ class _BaseOOFBoosting(BaseEstimator):
         random_state = check_random_state(self.random_state)
 
         cv = self.cv
-        if cv is None:
-            if self.is_classification: cv = StratifiedKFold(self.n_folds, shuffle=self.shuffle, random_state=random_state)
-            else: cv = KFold(self.n_folds, shuffle=self.shuffle, random_state=random_state)
+        if isinstance(cv, int):
+            if self.is_classification: cv = StratifiedKFold(cv, shuffle=self.shuffle, random_state=random_state)
+            else: cv = KFold(cv, shuffle=self.shuffle, random_state=random_state)
+
+        fold_indexes = list(cv.split(X, y))
 
         loss = self.loss
         if loss == "mse": loss = _MSELoss()
         elif loss == "mae": loss = _MAELoss()
         elif loss == "ce": loss = _CELoss()
         if not isinstance(loss, _Loss): raise RuntimeError(loss)
-
-        fold_indexes = list(cv.split(X, y))
 
         # boost target should have same shape as estimator predict
         # for binary classification we only predict positive label
@@ -123,9 +122,9 @@ class _BaseOOFBoosting(BaseEstimator):
             # Compute out-of-fold gradient predictions
             test_g_preds_list = []
             test_indexes_list = []
-            for fold, (train_index, test_index) in fold_indexes:
+            for fold, (train_index, test_index) in enumerate(fold_indexes):
 
-                estimator = self.estimator.fit(X[train_index], g[train_index])
+                estimator = copy.deepcopy(self.estimator).fit(X[train_index], g[train_index], **fit_kwargs)
                 self.estimators_.append(estimator)
                 preds = estimator.predict(X[test_index]) # note that estimator is always a regressor
                 test_indexes_list.extend(test_index)
@@ -187,14 +186,13 @@ class OOFBoostingClassifier(ClassifierMixin, _BaseOOFBoosting):
         self,
         estimator,
         n_rounds: int,
+        scoring,
         step_size: float | None = None,
         ls_iters: int | None = 32,
         loss: Literal["mse", "mae", "ce"] | _Loss = "ce",
         tol: float = 1e-12,
-        n_folds: int = 5,
-        cv = None,
+        cv: Any = 5,
         shuffle: bool = True,
-        scoring = "roc_auc",
         random_state = None,
         verbose = 0
     ):
@@ -218,14 +216,13 @@ class OOFBoostingRegressor(RegressorMixin, _BaseOOFBoosting):
         self,
         estimator,
         n_rounds: int,
+        scoring,
         step_size: float | None = None,
         ls_iters: int | None = 32,
         loss: Literal["mse", "mae", "ce"] | _Loss = "mse",
         tol: float = 1e-12,
-        n_folds: int = 5,
-        cv = None,
+        cv: Any = 5,
         shuffle: bool = True,
-        scoring = "mse",
         random_state = None,
         verbose = 0
     ):
