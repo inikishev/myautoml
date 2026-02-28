@@ -21,17 +21,17 @@ from ..metrics.scoring import get_scorer
 CUDA_IF_AVAILABLE = 'cuda' if torch.cuda.is_available() else "cpu"
 
 
-def _get_init_from_logreg(X, y, random_state):
-    logreg = LogisticRegression(random_state=random_state).fit(X, y)
+def _get_init_from_logreg(X, y, random_state, init_kwargs:dict):
+    logreg = LogisticRegression(random_state=random_state, **init_kwargs).fit(X, y)
     # coef_ is ndarray of shape (1, n_features) or (n_classes, n_features)
     return logreg.coef_.T, logreg.intercept_
 
-def _get_init_from_ridge(X, y, random_state):
-    ridge = Ridge(random_state=random_state).fit(X, y)
+def _get_init_from_ridge(X, y, random_state, init_kwargs:dict):
+    ridge = Ridge(random_state=random_state, **init_kwargs).fit(X, y)
     return ridge.coef_.T, ridge.intercept_
 
-def _get_init_from_ridge_classifier(X, y, random_state):
-    ridge = RidgeClassifier(random_state=random_state).fit(X, y)
+def _get_init_from_ridge_classifier(X, y, random_state, init_kwargs:dict):
+    ridge = RidgeClassifier(random_state=random_state, **init_kwargs).fit(X, y)
     return ridge.coef_.T, ridge.intercept_
 
 
@@ -53,6 +53,7 @@ class _BaseDFLinear(BaseEstimator):
         dtype,
         random_state,
         verbose,
+        init_kwargs,
     ):
         self.scoring = scoring
         self.activation: Callable[[torch.Tensor], torch.Tensor] | None | Literal["auto"] = activation
@@ -67,6 +68,7 @@ class _BaseDFLinear(BaseEstimator):
         self.dtype = dtype
         self.random_state = random_state
         self.verbose = verbose
+        self.init_kwargs = init_kwargs
 
     @torch.inference_mode()
     def fit(self, X, y):
@@ -95,13 +97,16 @@ class _BaseDFLinear(BaseEstimator):
             b_init = torch.zeros(n_targets, device=self.device, dtype=self.dtype)
 
         else:
+            init_kwargs = self.init_kwargs
+            if init_kwargs is None: init_kwargs = {}
             if self.init == "ridge":
-                if self.is_classification: W_init, b_init = _get_init_from_ridge_classifier(X, y, self.random_state)
-                else: W_init, b_init = _get_init_from_ridge(X, np.squeeze(y), self.random_state)
+                if self.is_classification: W_init, b_init = _get_init_from_ridge_classifier(
+                    X, y, self.random_state, init_kwargs)
+                else: W_init, b_init = _get_init_from_ridge(X, np.squeeze(y), self.random_state, init_kwargs)
             else:
                 assert self.init == "logreg"
                 assert self.is_classification
-                W_init, b_init = _get_init_from_logreg(X, y, self.random_state)
+                W_init, b_init = _get_init_from_logreg(X, y, self.random_state, init_kwargs)
 
             W_init = torch.as_tensor(W_init, device=self.device, dtype=self.dtype)
             b_init = torch.as_tensor(b_init, device=self.device, dtype=self.dtype)
@@ -336,6 +341,7 @@ class DFLinearClassifier(ClassifierMixin, _BaseDFLinear):
         dtype=torch.float64,
         random_state=0,
         verbose=0,
+        init_kwargs=None,
     ):
         kwargs = locals().copy()
         del kwargs["self"], kwargs["__class__"]
@@ -391,6 +397,7 @@ class DFLinearRegressor(RegressorMixin, _BaseDFLinear):
         dtype: dtype. Defaults to torch.float32.
         random_state: seed. Defaults to 0.
         verbose: whether to print optimization results. Defaults to False.
+        init_kwargs: kwargs to pass to Ridge/Lasso/Lars
     """
 
     is_classification: bool = False
@@ -401,7 +408,7 @@ class DFLinearRegressor(RegressorMixin, _BaseDFLinear):
         activation: Callable[[torch.Tensor], torch.Tensor] | None = None,
         l1: float = 0,
         l2: float = 0,
-        init: Literal["ridge", "random"] = 'ridge',
+        init: Literal["lars", "lasso", "ridge", "random"] = 'ridge',
         methods = None,
         tol: float = 1e-8,
         maxiter: int | None = None,
@@ -410,6 +417,7 @@ class DFLinearRegressor(RegressorMixin, _BaseDFLinear):
         dtype=torch.float64,
         random_state=0,
         verbose=0,
+        init_kwargs=None,
     ):
         kwargs = locals().copy()
         del kwargs["self"], kwargs["__class__"]
