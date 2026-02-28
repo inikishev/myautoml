@@ -45,6 +45,8 @@ class TabularFitter:
         max_disk_cache_mb: maximum size of cached dataframes on disk. Defaults to 10240.
         min_cache_sec: if computing estimator output takes less than this many seconds, it will never be cached.
         cache_els_per_sec: allows caching this many elements per each second computing estimator output takes.
+            For example, if estimator takes 10 seconds to compute, the output will be cached if it has less than
+            ``cache_els_per_sec * 10`` elements.
     """
 
     problem_type: ProblemType
@@ -88,7 +90,7 @@ class TabularFitter:
 
     def set_logging_level(self, level):
         for handler in self.logger.handlers:
-            if isinstance(handler, logging.StreamHandler):
+            if isinstance(handler, logging.StreamHandler) and not isinstance(handler, logging.FileHandler):
                 handler.setLevel(level)
 
     def _delete_temp_dir(self):
@@ -1179,7 +1181,7 @@ class TabularFitter:
                 else:
                     out = saved_estimator.predict_supervised(X_stacked)
 
-                if preds is None: preds = out
+                if preds is None: preds = out.copy()
                 else: preds += out
                 n += 1
 
@@ -1242,7 +1244,12 @@ class TabularFitter:
         if unsupervised is False:
             df = df.filter(pl.col("is_supervised"))
 
-        cols = ("name", "stack_level", "score_train_mean", "score_test_mean")
+        df = df.with_columns(
+            error_train_max = pl.col("error_train").list.max(),
+            error_test_max = pl.col("error_test").list.max()
+        )
+
+        cols = ("name", "stack_level", "error_train_mean", "error_test_mean", "error_train_max", "error_test_max")
         df = df.sort(sort).select(*cols, pl.all().exclude(cols))
 
         return polars_utils.include_exclude_cols(df, include=include, exclude=exclude)

@@ -1,7 +1,7 @@
 from importlib.util import find_spec
 from typing import TYPE_CHECKING
 
-from . import optuna_presets
+from . import optuna_presets, presets
 from .hill_climbing import (
     HillClimbingEnsembleClassifier,
     HillClimbingEnsembleRegressor,
@@ -20,7 +20,12 @@ from .interaction import (
     interaction_mod,
 )
 from .kernel_approximation import LaplaceRFF
-from .ridge_proba import RidgeClassifierProba, RidgeClassifierProbaCV
+from .ridge_proba import (
+    ClippedRidge,
+    ClippedRidgeCV,
+    RidgeClassifierProba,
+    RidgeClassifierProbaCV,
+)
 from .utility import NanToNum, ToDtype, ToList, ToPandas
 from .weighted_ensemble import (
     GreedyWeightedEnsembleClassifier,
@@ -35,3 +40,9 @@ if TYPE_CHECKING or find_spec("torch") is not None:
     from .learnable_elm import LearnableELMClassifier, LearnableELMRegressor
     from .mimic import DiagMimic, EighMimic, IterativeMimic
     from .to_cuda import ToCUDA
+
+if TYPE_CHECKING or find_spec("cleanlab") is not None:
+    from .clean_learning import CleanLearningClassifier, CleanLearningRegressor
+
+if TYPE_CHECKING or find_spec("autogluon") is not None:
+    from .autogluon import AutoGluonClassifier, AutoGluonRegressor
