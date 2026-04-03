@@ -10,7 +10,7 @@ import sklearn.metrics
 from ..utils import numpy_utils, python_utils
 
 if TYPE_CHECKING:
-    from ..core._fitter_utils import ProblemType
+    from ..core.oof._fitter_utils import ProblemType
 
 class Scorer:
     def __init__(self, name: str, score_func: Callable[[np.ndarray, np.ndarray, np.ndarray | None], float], greater_is_better:bool, optimum:float):

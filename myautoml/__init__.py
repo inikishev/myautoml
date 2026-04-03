@@ -1,5 +1,5 @@
 from . import polars_transformers as pl
-from .core import (
+from .core.oof import (
     TabularFitter,
     default_fit_fn,
     semi_supervised_classifier_fit_fn,

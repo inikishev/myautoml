@@ -26,7 +26,7 @@ from .ridge_proba import (
     RidgeClassifierProba,
     RidgeClassifierProbaCV,
 )
-from .utility import NanToNum, ToDtype, ToList, ToPandas
+from .utility import NanToNum, ToDtype, ToList, ToPandas, ClassifierWithLabelEncoder, RegressorAsClassifier
 from .weighted_ensemble import (
     GreedyWeightedEnsembleClassifier,
     GreedyWeightedEnsembleRegressor,

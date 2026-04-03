@@ -4,16 +4,40 @@
 
 Library that I use for kaggle competitions. This is kind of like Autogluon but you decide what models you fit, and all models you fit are saved for later usage in ensembling, stacking, etc.
 
-Following Autogluon's strategy (since it seeme to win all AutoML benchmarks), I use synchronized stratified k-folds and all ensembling is done on out-of-fold predictions, and for inference per-fold predictions are averaged. Actually in autogluon ensembling is fitted on averaged predictions, whereas I only average at the very end which I think should work better.
+Following Autogluon's strategy (since it seeme to win all AutoML benchmarks), I use synchronized stratified k-folds and all ensembling is done on out-of-fold predictions, and for inference per-fold predictions are averaged. Actually in autogluon ensembling is fitted on averaged predictions, whereas I only average at the very end, but now that I have thought about it, its actually worse the way I do it, and I need to fix at some point...
 
 > **note:** While I am developing this, updates may introduce API changes that can break existing folders.
 
-### How to use
+And it has a bunch of helpful sklearn-compatible estimators.
 
+### Estimators
+
+A bunch of sklearn-native estimators.
+
+Here are some useful ones:
+
+- `CleanLearningClassifier`, `CleanLearningRegressor` - simple wrapper around `cleanlab.classification.CleanLearning` and `cleanlab.regression.learn.CleanLearning`. This makes them fully compatible with sklearn API and they no longer error in pipelines.
+
+- `DFLinearClassifier`, `DFLinearRegressor` - optimize a linear model for any score (like accuracy) directly using derivative-free solvers. So for stacking on ROC AUC it actually doesn't outperform Ridge despite that optimizing MSE. But it could be good for other metrics which I haven't tested yet.
+
+- `RidgeClassifierProba`, `RidgeClassifierProbaCV` - simply applies sigmoid or softmax to ridge outputs. Surprisingly it has the same ROC AUC as plain Ridge, maybe its better for other metrics.
+
+- `CUDAEstimator` - The new array_api support in sklearn 1.8.0 allows running compatible estimators on CUDA. You should use `os.environ["SCIPY_ARRAY_API"] = 1` before importing sklearn, then you can pick any estimator from https://scikit-learn.org/stable/modules/array_api.html#support-for-array-api-compatible-inputs and pass them to `CUDAEstimator`. It will convert inputs to a CUDA tensor for the estimator, and convert outputs back to  numpy arrays.
+
+- `ClassifierWithLabelEncoder` - pass XGBClassifier or any other custom classifier to make it compatible with non-integer target column (e.g. if it is string).
+
+- `XBGEarlyStoppingClassifierCV`, `XBGEarlyStoppingRegressorCV` - A bag of `k` XGBs fitted using `k`-fold validation with early stopping on the test folds.
+
+
+### Polars transformers
+
+`myautoml.pl` contains ultra fast transformers written in polars (as in feature transformers like one hot encoder). They don't conform to sklearn API and instead have their own API, but you can call `transformer.to_sklearn()` on an unfitted one to convert to a fully sklearn-compatible estimator, and `transformer.to_frozen()` on a fitted one which returns `FrozenEstimator`. They are all fully documented in the docstrings, and yes I really need to put the documentation here, it will be done at some point.
+
+### How to use TabularFitter
 
 #### 1. Initialize
 
-First time ``fitter.initialize`` is ran, it creates a directory where all fitted models are saved as well as other stuff such as fold indexes. The next time the directory will be loaded and all models will be there, and you can continue fitting new models. No model you fit goes to waste - ensembles from many diverse models are extremely powerful.
+First time `fitter.initialize` is ran, it creates a directory where all fitted models are saved as well as other stuff such as fold indexes. The next time the directory will be loaded and all models will be there, and you can continue fitting new models. No model you fit goes to waste - ensembles from many diverse models are extremely powerful.
 
 ```python
 import polars as pl

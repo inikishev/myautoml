@@ -14,7 +14,7 @@ import joblib
 import numpy as np
 import polars as pl
 
-from ..utils import polars_utils, python_utils, torch_utils
+from ...utils import polars_utils, python_utils, torch_utils
 
 if TYPE_CHECKING:
     from .fitter import ProblemType, TabularFitter

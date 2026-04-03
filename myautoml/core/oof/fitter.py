@@ -22,10 +22,10 @@ import polars as pl
 from sklearn.model_selection import KFold, StratifiedKFold
 from sklearn.pipeline import make_pipeline
 
-from ..metrics import scoring
-from ..polars_transformers.auto_encoder import AutoEncoder, _AutoEncoderWrapper
-from ..utils import numpy_utils, polars_utils, python_utils, torch_utils
-from ..utils.rng import RNG
+from ...metrics import scoring
+from ...polars_transformers.auto_encoder import AutoEncoder, _AutoEncoderWrapper
+from ...utils import numpy_utils, polars_utils, python_utils, torch_utils
+from ...utils.rng import RNG
 from . import _fitter_utils
 
 ResponseMethod = Literal["decision_function", "predict", "predict_proba", "transform"] | str
