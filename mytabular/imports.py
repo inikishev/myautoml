@@ -68,4 +68,4 @@ from xgboost import (
 from catboost import CatBoostClassifier, CatBoostRanker, CatBoostRegressor
 from lightgbm import LGBMClassifier, LGBMRanker, LGBMRegressor
 
-import myautoml as ma
+import mytabular as mt

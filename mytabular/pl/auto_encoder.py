@@ -106,7 +106,7 @@ class AutoEncoder:
     Also infers problem type if it is not provided, splits to X and y, provides inverse y transform.
     """
 
-    logger = logging.getLogger("myautoml_AutoMLEncoder")
+    logger = logging.getLogger("mytabular_AutoMLEncoder")
 
     def __init__(
         self,

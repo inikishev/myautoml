@@ -2,7 +2,7 @@ import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
 
-from myautoml.polars_transformers.select import (
+from mytabular.pl.select import (
     DropCols,
     DropConstant,
     RemoveDuplicates,

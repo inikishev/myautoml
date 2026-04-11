@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 def _set_logging_file_handler_(self: "TabularFitter", root: Path):
     # Only keep file handler for current working directory
     if self._logging_file_handler is not None: self.logger.removeHandler(self._logging_file_handler)
-    file_handler = logging.FileHandler(root / "myautoml.log")
+    file_handler = logging.FileHandler(root / "mytabular.log")
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
     self.logger.addHandler(file_handler)
@@ -389,7 +389,7 @@ class SavedEstimator:
         if len(missing) > 0:
             raise RuntimeError(f"Those columns are missing: {missing}. Available columns: {inputs}")
 
-        self.logger.debug("Estimator has __myautoml_used_estimators__, some inputs will be skipped.")
+        self.logger.debug("Estimator has __mytabular_used_estimators__, some inputs will be skipped.")
         self.logger.debug("old inputs: %r", inputs)
         self.logger.debug("new inputs: %r", new_inputs)
 
@@ -691,8 +691,8 @@ def default_fit_fn(estimator, X: pl.DataFrame, y: pl.Series,
                    X_unlabeled: pl.DataFrame | None, sample_weight: np.ndarray | None):
     if X_unlabeled is not None:
         raise RuntimeError("`default_fit_fn` doesn't use X_unlabeled. "
-                           "Specify a custom fit_fn, or use `myautoml.unlabeled_fit_fn` or "
-                           "`myautoml.semi_supervised_classifier_fit_fn`")
+                           "Specify a custom fit_fn, or use `mytabular.unlabeled_fit_fn` or "
+                           "`mytabular.semi_supervised_classifier_fit_fn`")
 
     if sample_weight is not None: return estimator.fit(X, y.to_numpy(), sample_weight=sample_weight)
     return estimator.fit(X, y.to_numpy())

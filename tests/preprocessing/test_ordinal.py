@@ -3,7 +3,7 @@ import polars as pl
 import pytest
 from polars.testing import assert_frame_equal, assert_frame_not_equal
 
-from myautoml.polars_transformers.ordinal import MapEncoder, OrdinalEncoder
+from mytabular.pl.ordinal import MapEncoder, OrdinalEncoder
 
 
 @pytest.fixture

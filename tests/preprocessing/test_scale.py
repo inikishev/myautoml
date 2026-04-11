@@ -2,7 +2,7 @@ import pytest
 import polars as pl
 import polars.testing as pl_testing
 import numpy as np
-from myautoml.polars_transformers.scale import StandardScaler, MinMaxScaler, SampleNormalizer
+from mytabular.pl.scale import StandardScaler, MinMaxScaler, SampleNormalizer
 
 @pytest.fixture
 def sample_data():

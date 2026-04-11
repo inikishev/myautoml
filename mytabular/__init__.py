@@ -1,4 +1,4 @@
-from . import polars_transformers as pl
+from . import pl
 from .core.oof import (
     TabularFitter,
     default_fit_fn,

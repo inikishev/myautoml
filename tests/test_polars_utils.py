@@ -3,7 +3,7 @@ import polars as pl
 import pytest
 from polars.testing import assert_frame_equal, assert_series_equal
 
-from myautoml.utils.polars_utils import (
+from mytabular.utils.polars_utils import (
     include_exclude_cols,
     maybe_stack,
     to_dataframe,

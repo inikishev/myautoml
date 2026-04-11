@@ -23,7 +23,7 @@ from sklearn.model_selection import KFold, StratifiedKFold
 from sklearn.pipeline import make_pipeline
 
 from ...metrics import scoring
-from ...polars_transformers.auto_encoder import AutoEncoder, _AutoEncoderWrapper
+from ...pl.auto_encoder import AutoEncoder, _AutoEncoderWrapper
 from ...utils import numpy_utils, polars_utils, python_utils, torch_utils
 from ...utils.rng import RNG
 from . import _fitter_utils
@@ -67,7 +67,7 @@ class TabularFitter:
         cache_size_per_sec: int = 1_000_000
     ):
         # Create a logger
-        self.logger = logging.getLogger("myautoml.core.fitter.TabularFitter")
+        self.logger = logging.getLogger("mytabular.core.fitter.TabularFitter")
         for handler in self.logger.handlers[:]:
             self.logger.removeHandler(handler)
             handler.close()
@@ -159,7 +159,7 @@ class TabularFitter:
             X_unlabeled: unlabeled data for semi-supervised learning. Defaults to None.
             problem_type: 'binary', 'multiclass', or 'regression'. By default infers from ``y``.
             eval_metric: evaluation metric to use. By default uses a metric based on problem type.
-            dir: directory to store everything in. Default directory is ``f"myautoml-{datetime}"``,
+            dir: directory to store everything in. Default directory is ``f"mytabular-{datetime}"``,
                 and if such directory exists, it is loaded.
             n_folds: number of folds. Defaults to 8.
             n_fold_sets: number of fold sets. Total number of estimators fitted is ``n_folds * n_fold_sets``. Defaults to 1.
@@ -182,21 +182,21 @@ class TabularFitter:
         if dir is None:
 
             if load_if_exists:
-                # check if myautoml already exists
+                # check if mytabular already exists
                 for d in sorted(os.listdir()):
-                    if d.startswith("myautoml-"):
-                        # another dir starting with myautoml was already assigned,
+                    if d.startswith("mytabular-"):
+                        # another dir starting with mytabular was already assigned,
                         # so it is ambiguous which one to load and user must specify in that case
                         if dir is not None:
                             raise RuntimeError(
-                                "dir is not specified but are multiple directories starting with 'myautoml-'. "
+                                "dir is not specified but are multiple directories starting with 'mytabular-'. "
                                 "Specify `dir` manually.")
                         dir = d
 
             if dir is None:
                 nanos = time.time_ns()
                 dt = datetime.fromtimestamp(nanos / 1e9)
-                dir = f"myautoml-{dt.strftime('%Y-%m-%d %H-%M-%S')}-{(nanos % 1e9):09.0f}"
+                dir = f"mytabular-{dt.strftime('%Y-%m-%d %H-%M-%S')}-{(nanos % 1e9):09.0f}"
                 self.logger.info("dir is not specified, creating a new directory %s", dir)
 
             else:
@@ -409,12 +409,12 @@ class TabularFitter:
                     method = method
                 )
 
-                idx_col = pl.Series("__myautoml_col_id", test_index)
+                idx_col = pl.Series("__mytabular_col_id", test_index)
                 outputs.append(fold_test_outputs.with_columns(idx_col))
 
-            df = pl.concat(outputs).sort("__myautoml_col_id")
-            _fitter_utils._validate_test_indexes(df["__myautoml_col_id"].to_list(), self.n_samples)
-            return df.drop("__myautoml_col_id")
+            df = pl.concat(outputs).sort("__mytabular_col_id")
+            _fitter_utils._validate_test_indexes(df["__mytabular_col_id"].to_list(), self.n_samples)
+            return df.drop("__mytabular_col_id")
 
         # else: estimator doesn't use folds
         saved_estimator = self.estimators[estimator][set_i][None]
@@ -734,8 +734,8 @@ class TabularFitter:
                             if os.path.exists(fitted_file): os.remove(fitted_file)
                             raise e
 
-                if hasattr(fitted_estimator, "__myautoml_used_estimators__"):
-                    ret = getattr(fitted_estimator, "__myautoml_used_estimators__")()
+                if hasattr(fitted_estimator, "__mytabular_used_estimators__"):
+                    ret = getattr(fitted_estimator, "__mytabular_used_estimators__")()
                     if ret is not None:
                         assert isinstance(ret, str) is False
                         used_estimators[str(set_i)][str(fold_i)] = [str(v) for v in ret] # convert np.str_

@@ -10,7 +10,7 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "myautoml"
+name = "mytabular"
 description = "Library that I use for kaggle competitions. This is kind of like Autogluon but you decide what models you fit, and all models you fit are saved for later usage in ensembling, stacking, etc."
 version = "0.0.1"
 requires-python = ">=3.12"
@@ -24,13 +24,13 @@ authors = [
   {name = "Ivan Nikishev", email = "nkshv2@gmail.com"},
 ]
 license = {file = "LICENSE"}
-keywords = ["optimization", "optimizers", "torch", "neural networks", "zeroth order", "second order"]
+keywords = ["ML"]
 
 
 [project.urls]
-Homepage = "https://github.com/inikishev/myautoml"
-Repository = "https://github.com/inikishev/myautoml"
-Issues = "https://github.com/inikishev/myautoml/isses"
+Homepage = "https://github.com/inikishev/mytabular"
+Repository = "https://github.com/inikishev/mytabular"
+Issues = "https://github.com/inikishev/mytabular/isses"
 
 
 [tool.pytest.ini_options]

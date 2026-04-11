@@ -1,6 +1,6 @@
 <!-- # ![tests](https://github.com/inikishev/torchzero/actions/workflows/tests.yml/badge.svg) -->
 
-<h1 align='center'>myautoml</h1>
+<h1 align='center'>mytabular</h1>
 
 Library that I use for kaggle competitions. This is kind of like Autogluon but you decide what models you fit, and all models you fit are saved for later usage in ensembling, stacking, etc.
 
@@ -31,7 +31,7 @@ Here are some useful ones:
 
 ### Polars transformers
 
-`myautoml.pl` contains ultra fast transformers written in polars (as in feature transformers like one hot encoder). They don't conform to sklearn API and instead have their own API, but you can call `transformer.to_sklearn()` on an unfitted one to convert to a fully sklearn-compatible estimator, and `transformer.to_frozen()` on a fitted one which returns `FrozenEstimator`. They are all fully documented in the docstrings, and yes I really need to put the documentation here, it will be done at some point.
+`mytabular.pl` contains ultra fast transformers written in polars (as in feature transformers like one hot encoder). They don't conform to sklearn API and instead have their own API, but you can call `transformer.to_sklearn()` on an unfitted one to convert to a fully sklearn-compatible estimator, and `transformer.to_frozen()` on a fitted one which returns `FrozenEstimator`. They are all fully documented in the docstrings, and yes I really need to put the documentation here, it will be done at some point.
 
 ### How to use TabularFitter
 
@@ -41,7 +41,7 @@ First time `fitter.initialize` is ran, it creates a directory where all fitted m
 
 ```python
 import polars as pl
-import myautoml as ma
+import mytabular as ma
 
 # load some data
 df_train = pl.read_csv("train.csv")

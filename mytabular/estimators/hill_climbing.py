@@ -127,7 +127,7 @@ class _BaseHillClimbingEnsemble(BaseEstimator):
         self.required_cols_ = set(f"{model}-{i}" for model in self.weights_.keys() for i in col_indexes[model])
         return self
 
-    def __myautoml_used_estimators__(self):
+    def __mytabular_used_estimators__(self):
         return list(self.weights_.keys())
 
     def transform(self, X):
@@ -139,7 +139,7 @@ class _BaseHillClimbingEnsemble(BaseEstimator):
             missing = self.required_cols_.difference(X.columns)
             raise RuntimeError(f"X is missing the following columns: {missing}")
 
-        # X will only have estimators from ``__myautoml_used_estimators__``
+        # X will only have estimators from ``__mytabular_used_estimators__``
         return X
 
     def _predict_raw(self, X):

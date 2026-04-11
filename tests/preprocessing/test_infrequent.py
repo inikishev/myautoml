@@ -2,10 +2,10 @@ import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
 
-from myautoml.polars_transformers.infrequent import MergeInfrequent
+from mytabular.pl.infrequent import MergeInfrequent
 
 # Assuming the classes are in the correct import path
-# from myautoml.preprocessing.infrequent import MergeInfrequent
+# from mytabular.preprocessing.infrequent import MergeInfrequent
 
 def test_merge_infrequent_min_frequency_int():
     df = pl.DataFrame({

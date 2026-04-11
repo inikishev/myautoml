@@ -1,7 +1,7 @@
 import pytest
 import polars as pl
 import polars.testing as pl_testing
-from myautoml.polars_transformers.impute import MissingIndicator, MissingStatistics, SimpleImputer
+from mytabular.pl.impute import MissingIndicator, MissingStatistics, SimpleImputer
 
 @pytest.fixture
 def sample_data():

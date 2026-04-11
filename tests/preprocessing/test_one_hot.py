@@ -4,7 +4,7 @@ import polars as pl
 import polars.testing as pl_testing
 import pytest
 
-from myautoml.polars_transformers.one_hot import OneHotEncoder
+from mytabular.pl.one_hot import OneHotEncoder
 
 
 @pytest.fixture

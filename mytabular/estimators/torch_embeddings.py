@@ -6,8 +6,8 @@ import polars as pl
 import torch
 from torch import nn
 
-from ..polars_transformers.auto_encoder import AutoEncoder
-from ..polars_transformers.ordinal import OrdinalEncoder
+from ..pl.auto_encoder import AutoEncoder
+from ..pl.ordinal import OrdinalEncoder
 from ..utils.polars_utils import to_dataframe
 
 
