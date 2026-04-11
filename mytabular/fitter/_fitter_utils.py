@@ -14,7 +14,7 @@ import joblib
 import numpy as np
 import polars as pl
 
-from ...utils import polars_utils, python_utils, torch_utils
+from ..utils import polars_utils, python_utils, torch_utils
 
 if TYPE_CHECKING:
     from .fitter import ProblemType, TabularFitter
@@ -395,7 +395,7 @@ class SavedEstimator:
 
         return new_inputs
 
-    def get_config(self):
+    def get_config(self) -> dict:
         return python_utils.read_json(self.dir / "config.json")
 
     def get_estimator(self):

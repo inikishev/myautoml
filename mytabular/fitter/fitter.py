@@ -22,19 +22,19 @@ import polars as pl
 from sklearn.model_selection import KFold, StratifiedKFold
 from sklearn.pipeline import make_pipeline
 
-from ...metrics import scoring
-from ...pl.auto_encoder import AutoEncoder, _AutoEncoderWrapper
-from ...utils import numpy_utils, polars_utils, python_utils, torch_utils
-from ...utils.rng import RNG
+from ..metrics import scoring
+from ..pl.auto_encoder import AutoEncoder, _AutoEncoderWrapper
+from ..utils import numpy_utils, polars_utils, python_utils, torch_utils
+from ..utils.rng import RNG
 from . import _fitter_utils
 
 ResponseMethod = Literal["decision_function", "predict", "predict_proba", "transform"] | str
 ProblemType = Literal["binary", "multiclass", "regression", "multitarget", "multioutput", "multitask"]
-_PROBLEM_TYPE_TO_TARGET_ENCODER: dict[ProblemType, Literal['standard', 'minmax', 'ordinal', 'none']] = {
-    "binary": "ordinal",
-    "multiclass": "ordinal",
-    "regression": "minmax",
-}
+# _PROBLEM_TYPE_TO_TARGET_ENCODER: dict[ProblemType, Literal['standard', 'minmax', 'ordinal', 'none']] = {
+#     "binary": "ordinal",
+#     "multiclass": "ordinal",
+#     "regression": "minmax",
+# }
 
 class TabularFitter:
     """Tabular fitter.
@@ -64,7 +64,8 @@ class TabularFitter:
         max_ram_cache_mb = 1024,
         max_disk_cache_mb = 10240,
         min_cache_sec: float = 0.1,
-        cache_size_per_sec: int = 1_000_000
+        cache_size_per_sec: int = 1_000_000,
+        store_unlabeled_preds: bool = True,
     ):
         # Create a logger
         self.logger = logging.getLogger("mytabular.core.fitter.TabularFitter")
@@ -132,7 +133,7 @@ class TabularFitter:
         self,
         X: pl.DataFrame | Any,
         y: str | pl.Series | Any,
-        X_unlabeled=None,
+        X_unlabeled = None,
         problem_type: ProblemType | None = None,
         eval_metric: scoring.Scorer | str | Callable | None = None,
         dir: str | os.PathLike | None = None,
@@ -224,6 +225,9 @@ class TabularFitter:
             binary_to_bool = binary_to_bool,
             encode_target = encode_target,
             drop_cols = drop_cols,
+            numeric_cols = numeric_cols,
+            categorical_cols = categorical_cols,
+            text_cols = text_cols,
         )
         enc.logger = self.logger
         enc.fit(X=X, y=y, X_unlabeled=X_unlabeled, problem_type=problem_type)
@@ -1151,18 +1155,18 @@ class TabularFitter:
         self.auto_encoder.validate_data(X)
         X = self.auto_encoder.transform_X(X)
 
-        config = self.get_config(estimator)
+        first_config = self.get_config(estimator)
         preds = None
         n = 0
 
         for set_i in range(self.n_fold_sets):
             for fold_i in range(self.n_folds):
 
-                mapped_fold_i = config["fold_map"][str(fold_i)] if config["use_folds"] else None
-                saved_estimator = self.estimators[estimator][set_i][mapped_fold_i]
+                mapped_fold_i = first_config["fold_map"][str(fold_i)] if first_config["use_folds"] else None
+                first_estimator = self.estimators[estimator][set_i][mapped_fold_i]
 
-                config = saved_estimator.get_config()
-                inputs = saved_estimator.get_inputs(self, set_i, fold_i)
+                first_config = first_estimator.get_config()
+                inputs = first_estimator.get_inputs(self, set_i, fold_i)
 
                 X_stacked = self.stack_new(
                     X,
@@ -1172,18 +1176,35 @@ class TabularFitter:
                     cache_dir = self.root / "temp"
                 )
 
-                if self.is_classification():
-                    if config["supports_proba"]:
-                        out = saved_estimator.predict_proba_supervised(X_stacked)
-                    else:
-                        out = saved_estimator.predict_supervised(X_stacked)
-                        out = numpy_utils.one_hot(out, n_classes=self.n_classes)
-                else:
-                    out = saved_estimator.predict_supervised(X_stacked)
+                # Pass this set/fold to all estimators
+                for estimators_set in self.estimators[estimator].values():
+                    for saved_estimator in estimators_set.values():
 
-                if preds is None: preds = out.copy()
-                else: preds += out
-                n += 1
+                        config = saved_estimator.get_config()
+
+                        # used_estimators may be different in different folds if not None
+                        # so we have to regenerate X_stacked
+                        if config["used_estimators"] is not None:
+                            X_stacked = self.stack_new(
+                                X,
+                                set_i = set_i,
+                                fold_i = fold_i,
+                                inputs = saved_estimator.get_inputs(self, set_i, fold_i),
+                                cache_dir = self.root / "temp"
+                            )
+
+                        if self.is_classification():
+                            if first_config["supports_proba"]:
+                                out = saved_estimator.predict_proba_supervised(X_stacked)
+                            else:
+                                out = saved_estimator.predict_supervised(X_stacked)
+                                out = numpy_utils.one_hot(out, n_classes=self.n_classes)
+                        else:
+                            out = saved_estimator.predict_supervised(X_stacked)
+
+                        if preds is None: preds = out.copy()
+                        else: preds += out
+                        n += 1
 
         self._delete_temp_dir()
         (self.root / "temp").mkdir()

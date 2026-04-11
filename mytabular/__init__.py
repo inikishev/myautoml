@@ -1,5 +1,5 @@
 from . import pl
-from .core.oof import (
+from .fitter import (
     TabularFitter,
     default_fit_fn,
     semi_supervised_classifier_fit_fn,
