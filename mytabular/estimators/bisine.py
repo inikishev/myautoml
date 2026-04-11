@@ -1,8 +1,10 @@
+from typing import Any
+
 import numpy as np
 import torch
 import torch.nn as nn
 from sklearn.base import BaseEstimator, ClassifierMixin, RegressorMixin
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import KFold, StratifiedKFold, train_test_split
 from sklearn.utils.validation import (
     check_is_fitted,
     validate_data,  # pyright:ignore[reportAttributeAccessIssue]
@@ -461,3 +463,195 @@ class BisineRegressor(RegressorMixin, _BaseBisine):
 
     def predict(self, X):
         return self.decision_function(X)
+
+
+
+
+class _BaseBisineEarlyStoppingCV(BaseEstimator):
+    is_classification: bool
+
+    def __init__(
+        self,
+        num_units: int,
+        max_iter: int,
+        tol: float,
+        lr: float,
+        eps: float,
+        damping: float,
+        max_no_improvement: int,
+        scoring,
+        device: torch.types.Device,
+        dtype: torch.dtype,
+        verbose: bool,
+        cv: Any,
+        shuffle: bool,
+        random_state,
+    ):
+        self.max_iter = max_iter
+        self.tol = tol
+        self.lr = lr
+        self.eps = eps
+        self.damping = damping
+        self.num_units = num_units
+        self.verbose = verbose
+        self.max_no_improvement = max_no_improvement
+        self.device = device
+        self.dtype = dtype
+        self.scoring = scoring
+        self.cv = cv
+        self.shuffle = shuffle
+        self.random_state = random_state
+
+    def fit(self, X, y):
+        _, y = validate_data(self, X=X, y=y)
+        if self.is_classification:
+            self.classes_, y = np.unique(y, return_inverse=True)
+
+        cv = self.cv
+
+        if isinstance(cv, int):
+            if self.is_classification: cv = StratifiedKFold(cv, shuffle=self.shuffle, random_state=self.random_state)
+            else: cv = KFold(cv, shuffle=self.shuffle, random_state=self.random_state)
+
+        fold_indexes = list(cv.split(X, y))
+
+        self.estimators_: list = []
+
+        cls = BisineClassifier if self.is_classification else BisineRegressor
+
+        for fold, (train_index, test_index) in enumerate(fold_indexes):
+
+            estimator = cls(
+                num_units = self.num_units,
+                max_iter = self.max_iter,
+                tol = self.tol,
+                lr = self.lr,
+                eps = self.eps,
+                damping = self.damping,
+                max_no_improvement = self.max_no_improvement,
+                scoring = self.scoring,
+                device = self.device,
+                dtype = self.dtype,
+                verbose = self.verbose,
+            )
+            estimator.fit(
+                X[train_index],
+                y[train_index],
+                X_test = X[test_index],
+                y_test = y[test_index]
+            )
+            self.estimators_.append(estimator)
+
+        return self
+
+    def predict_proba(self, X):
+        check_is_fitted(self)
+        proba = None
+        for est in self.estimators_:
+            if proba is None: proba = est.predict_proba(X)
+            else: proba += est.predict_proba(X)
+
+        assert proba is not None
+        return proba / len(self.estimators_)
+
+    def predict(self, X):
+        if self.is_classification:
+            return self.classes_[np.argmax(self.predict_proba(X), -1)]
+
+        preds = None
+        for est in self.estimators_:
+            if preds is None: preds = est.predict(X)
+            else: preds += est.predict(X)
+
+        assert preds is not None
+        return preds / len(self.estimators_)
+
+class BisineEarlyStoppingClassifierCV(ClassifierMixin, _BaseBisineEarlyStoppingCV):
+    """Neural net with single hidden layer using sinusoidal nonlinearity trained with saddle-free Newton.
+    Very fast to fit on small datasets, but slow for large datasets.
+
+    In most cases should be used in BaggingClassifier or similar estimators because on its own it overfits.
+
+    Args:
+        num_units: number of bisine units. Defaults to 2.
+        max_iter: maximum number of iterations. Defaults to 1000.
+        tol: tolerance on loss change for convergence. Defaults to 1e-16.
+        lr: base step size of the backtracking line search. Defaults to 1.0.
+        eps: eps in optimizer.
+        damping: damping in optimizer.
+        max_no_improvement: max number of consecutive steps that attained no loss improvement larger than ``tol``,
+            or validation score imporvement. Defaults to 10.
+        scoring: scoring for early stopping. Defaults to "roc_auc".
+        device: device. Defaults to 'cpu'.
+        dtype: dtype. Defaults to torch.float64.
+        verbose: verbose. Defaults to False.
+    """
+
+    is_classification: bool = True
+
+    def __init__(
+        self,
+        num_units: int = 2,
+        max_iter: int = 1000,
+        tol: float = 1e-16,
+        lr: float = 1.0,
+        eps: float = 1e-16,
+        damping: float = 1e-3,
+        max_no_improvement: int = 10,
+        scoring = "roc_auc",
+        device: torch.types.Device = 'cpu',
+        dtype: torch.dtype = torch.float64,
+        verbose: bool = False,
+        cv: Any = 10,
+        shuffle: bool = True,
+        random_state = None,
+    ):
+        kwargs = locals().copy()
+        del kwargs["self"], kwargs["__class__"]
+        super().__init__(**kwargs)
+
+
+class BisineEarlyStoppingRegressorCV(RegressorMixin, _BaseBisineEarlyStoppingCV):
+    """Neural net with single hidden layer using sinusoidal nonlinearity trained with saddle-free Newton.
+    Very fast to fit on small datasets, but slow for large datasets.
+
+    In most cases should be used in BaggingClassifier or similar estimators because on its own it overfits.
+
+    Args:
+        num_units: number of bisine units. Defaults to 2.
+        max_iter: maximum number of iterations. Defaults to 1000.
+        tol: tolerance on loss change for convergence. Defaults to 1e-16.
+        lr: base step size of the backtracking line search. Defaults to 1.0.
+        eps: eps in optimizer.
+        damping: damping in optimizer.
+        max_no_improvement: max number of consecutive steps that attained no loss improvement larger than ``tol``,
+            or validation score imporvement. Defaults to 10.
+        scoring: scoring for early stopping. Defaults to "roc_auc".
+        device: device. Defaults to 'cpu'.
+        dtype: dtype. Defaults to torch.float64.
+        verbose: verbose. Defaults to False.
+    """
+
+    is_classification: bool = False
+
+    def __init__(
+        self,
+        num_units: int = 2,
+        max_iter: int = 1000,
+        tol: float = 1e-16,
+        lr: float = 1.0,
+        eps: float = 1e-16,
+        damping: float = 1e-3,
+        max_no_improvement: int = 10,
+        scoring = "mse",
+        device: torch.types.Device = 'cpu',
+        dtype: torch.dtype = torch.float64,
+        verbose: bool = False,
+        cv: Any = 10,
+        shuffle: bool = True,
+        random_state = None,
+    ):
+        kwargs = locals().copy()
+        del kwargs["self"], kwargs["__class__"]
+        super().__init__(**kwargs)
+

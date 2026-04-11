@@ -2,6 +2,7 @@ from importlib.util import find_spec
 from typing import TYPE_CHECKING
 
 from . import optuna_presets, presets
+from .boosting import OOFBoostingClassifier, OOFBoostingRegressor
 from .hill_climbing import (
     HillClimbingEnsembleClassifier,
     HillClimbingEnsembleRegressor,
@@ -26,7 +27,14 @@ from .ridge_proba import (
     RidgeClassifierProba,
     RidgeClassifierProbaCV,
 )
-from .utility import NanToNum, ToDtype, ToList, ToPandas, ClassifierWithLabelEncoder, RegressorAsClassifier
+from .utility import (
+    ClassifierWithLabelEncoder,
+    NanToNum,
+    RegressorAsClassifier,
+    ToDtype,
+    ToList,
+    ToPandas,
+)
 from .weighted_ensemble import (
     GreedyWeightedEnsembleClassifier,
     GreedyWeightedEnsembleRegressor,
@@ -34,12 +42,22 @@ from .weighted_ensemble import (
 )
 
 if TYPE_CHECKING or find_spec("torch") is not None:
-    from .bisine import BisineClassifier, BisineRegressor
+    from .bisine import (
+        BisineClassifier,
+        BisineEarlyStoppingClassifierCV,
+        BisineEarlyStoppingRegressorCV,
+        BisineRegressor,
+    )
     from .df_linear import DFLinearClassifier, DFLinearRegressor
-    from .irelu import IreluClassifier, IreluRegressor
+    from .irelu import (
+        IreluClassifier,
+        IreluEarlyStoppingClassifierCV,
+        IreluEarlyStoppingRegressorCV,
+        IreluRegressor,
+    )
     from .learnable_elm import LearnableELMClassifier, LearnableELMRegressor
     from .mimic import DiagMimic, EighMimic, IterativeMimic
-    from .to_cuda import ToCUDA, CUDAEstimator
+    from .to_cuda import CUDAEstimator, ToCUDA
 
 if TYPE_CHECKING or find_spec("cleanlab") is not None:
     from .clean_learning import CleanLearningClassifier, CleanLearningRegressor

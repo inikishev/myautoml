@@ -1,3 +1,4 @@
+import math
 from typing import Literal, Any
 
 import numpy as np
@@ -58,6 +59,7 @@ class _BaseOOFBoosting(BaseEstimator):
         ls_iters: int | None,
         loss: Literal["mse", "mae", "ce"] | _Loss,
         tol: float,
+        max_no_improvement: int,
         cv: int | Any,
         shuffle: bool,
         random_state,
@@ -69,6 +71,7 @@ class _BaseOOFBoosting(BaseEstimator):
         self.ls_iters = ls_iters
         self.loss = loss
         self.tol = tol
+        self.max_no_improvement = max_no_improvement
         self.cv = cv
         self.shuffle = shuffle
         self.scoring = scoring
@@ -103,19 +106,26 @@ class _BaseOOFBoosting(BaseEstimator):
             else: boost_target = y
         else:
             boost_target = y # residual or gradient
+
         oob_boost_sum = np.zeros_like(boost_target)
         g = loss.gradient(boost_target, preds=oob_boost_sum)
 
-        best_error = float("inf")
-
-        self.estimators_ = []
-        self.step_sizes_ = []
-
         def get_error(preds: np.ndarray):
             if self.is_classification:
-                if preds.ndim == 1: return scorer.error(y, preds=preds>0.5, proba=np.stack([1-preds,preds],-1))
+                if preds.ndim == 1:
+                    preds = expit(preds)
+                    return scorer.error(y, preds=preds>0.5, proba=np.stack([1-preds,preds],-1))
+
+                preds = softmax(preds, -1)
                 return scorer.error(y, preds=preds.argmax(-1), proba=preds)
+
             return scorer.error(y, preds=preds, proba=None)
+
+        n_no_improvement = 0
+        step_sizes = []
+        self.step_sizes_ = []
+        best_error = float("inf")
+        self.estimators_ = []
 
         for round_ in range(self.n_rounds):
 
@@ -158,10 +168,22 @@ class _BaseOOFBoosting(BaseEstimator):
             # Make a step
             oob_boost_sum = oob_boost_sum + oof_g_preds * step_size
             error = get_error(oob_boost_sum)
-            if error + self.tol >= best_error: break
-            best_error = error
-            self.step_sizes_.append(step_size)
+
+            if self.verbose > 0:
+                print(f"{round_}: {error = :.6f}, {best_error = :.6f}, {n_no_improvement = }")
+
+            step_sizes.append(step_size)
             g = loss.gradient(boost_target, preds=oob_boost_sum)
+
+            if math.isfinite(best_error) and error + self.tol >= best_error:
+                n_no_improvement += 1
+                if n_no_improvement >= self.max_no_improvement:
+                    break
+
+            else:
+                n_no_improvement = 0
+                best_error = error
+                self.step_sizes_ = step_sizes.copy()
 
         return self
 
@@ -191,7 +213,8 @@ class OOFBoostingClassifier(ClassifierMixin, _BaseOOFBoosting):
         ls_iters: int | None = 32,
         loss: Literal["mse", "mae", "ce"] | _Loss = "ce",
         tol: float = 1e-12,
-        cv: Any = 5,
+        max_no_improvement: int = 10,
+        cv: Any = 10,
         shuffle: bool = True,
         random_state = None,
         verbose = 0
@@ -220,8 +243,9 @@ class OOFBoostingRegressor(RegressorMixin, _BaseOOFBoosting):
         step_size: float | None = None,
         ls_iters: int | None = 32,
         loss: Literal["mse", "mae", "ce"] | _Loss = "mse",
+        max_no_improvement: int = 10,
         tol: float = 1e-12,
-        cv: Any = 5,
+        cv: Any = 10,
         shuffle: bool = True,
         random_state = None,
         verbose = 0

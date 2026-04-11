@@ -94,7 +94,7 @@ class XBGEarlyStoppingClassifierCV(ClassifierMixin, _BaseXGBEarlyStoppingCV):
     def __init__(
         self,
         xgb: XGBClassifier | XGBRFClassifier,
-        cv: Any = 5,
+        cv: Any = 10,
         shuffle: bool = True,
         random_state = None,
         verbose = False,
@@ -111,7 +111,7 @@ class XBGEarlyStoppingRegressorCV(RegressorMixin, _BaseXGBEarlyStoppingCV):
     def __init__(
         self,
         xgb: XGBRegressor | XGBRFRegressor,
-        cv: Any = 5,
+        cv: Any = 10,
         shuffle: bool = True,
         random_state = None,
         verbose = False,
